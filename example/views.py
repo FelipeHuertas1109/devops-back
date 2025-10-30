@@ -1,6 +1,6 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 import jwt
@@ -801,3 +801,69 @@ def directivo_configuraciones_inicializar(request):
         'configuraciones_existentes': configuraciones_existentes,
         'total_procesadas': len(configuraciones_por_defecto)
     }, status=status.HTTP_201_CREATED)
+
+# ===== DIRECTIVO AUTORIZACIÓN =====
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def autorizar_monitor(request):
+    """
+    Endpoint para que el directivo autorice a un monitor para marcar asistencia.
+    """
+    usuario = request.user
+
+    # Verificar si el usuario es un directivo
+    if usuario.tipo_usuario != 'directivo':
+        return Response(
+            {'error': 'No tiene permisos para realizar esta acción.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    monitor_id = request.data.get('monitor_id')
+
+    # Verificar si el monitor existe
+    try:
+        monitor = UsuarioPersonalizado.objects.get(id=monitor_id, tipo_usuario='monitor')
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response(
+            {'error': 'Monitor no encontrado.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # Autorizar al monitor
+    monitor.autorizado = True
+    monitor.save()
+
+    return Response(
+        {'message': f'El monitor {monitor.username} ha sido autorizado para marcar asistencia.'},
+        status=status.HTTP_200_OK
+    )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def marcar_asistencia(request):
+    """
+    Endpoint para que los monitores marquen su asistencia.
+    """
+    usuario = request.user
+
+    # Verificar si el usuario es un monitor autorizado
+    if usuario.tipo_usuario != 'monitor' or not usuario.autorizado:
+        return Response(
+            {'error': 'No tiene permisos para realizar esta acción o no está autorizado.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Registrar la asistencia
+    asistencia = {
+        'monitor_id': usuario.id,
+        'fecha': date.today(),
+        'horas': request.data.get('horas', 0)
+    }
+
+    # Aquí se puede agregar lógica para guardar la asistencia en la base de datos
+
+    return Response(
+        {'message': f'Asistencia registrada para el monitor {usuario.username}.'},
+        status=status.HTTP_200_OK
+    )

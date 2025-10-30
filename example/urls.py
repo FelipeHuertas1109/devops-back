@@ -26,4 +26,10 @@ urlpatterns = [
     path('directivo/configuraciones/inicializar/', views.directivo_configuraciones_inicializar, name='directivo_configuraciones_inicializar'),
     path('directivo/configuraciones/<str:clave>/', views.directivo_configuraciones_detalle, name='directivo_configuraciones_detalle'),
     path('directivo/configuraciones/<int:id>/', views.directivo_configuraciones_detalle_por_id, name='directivo_configuraciones_detalle_por_id'),
+    
+    # ===== DIRECTIVO AUTORIZACIÓN =====
+    path('directivo/autorizar-monitor/', views.autorizar_monitor, name='autorizar_monitor'),
+    
+    # ===== MONITOR ASISTENCIA =====
+    path('monitor/marcar-asistencia/', views.marcar_asistencia, name='marcar_asistencia'),
 ]
