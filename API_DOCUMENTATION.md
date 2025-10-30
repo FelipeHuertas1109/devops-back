@@ -900,6 +900,26 @@ curl -X PUT "http://localhost:8000/example/directivo/configuraciones/costo_por_h
   }'
 ```
 
+### 9. Autorizar Monitor (Directivo)
+```bash
+curl -X POST http://localhost:8000/example/directivo/autorizar-monitor/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "monitor_id": 1
+  }'
+```
+
+### 10. Marcar Asistencia (Monitor)
+```bash
+curl -X POST http://localhost:8000/example/monitor/marcar-asistencia/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "horas": 4
+  }'
+```
+
 ---
 
 ## 📝 Notas Importantes
