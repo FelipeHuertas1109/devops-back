@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import UsuarioPersonalizado, HorarioFijo, AjusteHoras, ConfiguracionSistema
+from .models import UsuarioPersonalizado, HorarioFijo, Asistencia, AjusteHoras, ConfiguracionSistema
 
 # ===== SERIALIZERS DE AUTENTICACIÓN (HU1, HU2) =====
 
@@ -158,6 +158,92 @@ class HorarioFijoEditMultipleSerializer(serializers.Serializer):
             if horario['sede'] not in sedes_validas:
                 raise serializers.ValidationError(f"Horario {i+1}: 'sede' debe ser 'SA' o 'BA'")
         
+        return value
+
+
+# ===== SERIALIZERS DE ASISTENCIAS (HU5) =====
+
+class AsistenciaSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo para asistencias con información detallada.
+    """
+    usuario = UsuarioSerializer(read_only=True)
+    horario = HorarioFijoSerializer(read_only=True)
+    estado_autorizacion_display = serializers.CharField(source='get_estado_autorizacion_display', read_only=True)
+    
+    class Meta:
+        model = Asistencia
+        fields = [
+            'id', 'usuario', 'horario', 'fecha', 'presente', 
+            'estado_autorizacion', 'estado_autorizacion_display', 
+            'horas', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class AsistenciaCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer para crear nuevas asistencias.
+    El usuario se obtiene del token de autenticación.
+    """
+    horario_id = serializers.IntegerField(write_only=True, help_text="ID del horario fijo asociado")
+    
+    class Meta:
+        model = Asistencia
+        fields = ['horario_id', 'fecha', 'presente', 'horas']
+    
+    def validate_horario_id(self, value):
+        """Validar que el horario existe"""
+        try:
+            horario = HorarioFijo.objects.get(id=value)
+            return value
+        except HorarioFijo.DoesNotExist:
+            raise serializers.ValidationError("Horario no encontrado.")
+    
+    def validate_horas(self, value):
+        """Validar rango de horas permitidas"""
+        if value < 0 or value > 24:
+            raise serializers.ValidationError("Las horas deben estar entre 0 y 24.")
+        return value
+    
+    def validate(self, data):
+        """
+        Validar unicidad: no puede existir otra asistencia con la misma combinación
+        usuario + fecha + horario
+        """
+        # Obtener el usuario del contexto (se pasa desde la vista)
+        usuario = self.context.get('usuario')
+        horario_id = data.get('horario_id')
+        fecha = data.get('fecha')
+        
+        if usuario and horario_id and fecha:
+            # Verificar si existe una asistencia con estos datos
+            existe = Asistencia.objects.filter(
+                usuario=usuario,
+                horario_id=horario_id,
+                fecha=fecha
+            ).exists()
+            
+            if existe:
+                raise serializers.ValidationError(
+                    "Ya existe un registro de asistencia para este usuario, fecha y horario."
+                )
+        
+        return data
+
+
+class AsistenciaUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer para actualizar asistencias existentes.
+    """
+    class Meta:
+        model = Asistencia
+        fields = ['presente', 'horas', 'estado_autorizacion']
+    
+    def validate_horas(self, value):
+        """Validar rango de horas permitidas"""
+        if value < 0 or value > 24:
+            raise serializers.ValidationError("Las horas deben estar entre 0 y 24.")
         return value
 
 

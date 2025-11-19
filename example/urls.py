@@ -16,6 +16,19 @@ urlpatterns = [
     # ===== DIRECTIVO - CONSULTA DE HORARIOS (HU3) =====
     path('directivo/horarios/', views.directivo_horarios_monitores, name='directivo_horarios_monitores'),
     
+    # ===== ASISTENCIAS (HU5) =====
+    path('asistencias/', views.asistencias, name='asistencias'),
+    path('asistencias/<int:pk>/', views.asistencia_detalle, name='asistencia_detalle'),
+    path('directivo/asistencias/', views.directivo_asistencias, name='directivo_asistencias'),
+    path('directivo/asistencias/<int:pk>/autorizar/', views.directivo_asistencia_autorizar, name='directivo_asistencia_autorizar'),
+    
+    # ===== ALIAS PARA SCHEDULES (HU3) =====
+    path('schedules/', views.horarios_fijos, name='schedules'),
+    path('schedules/multiple/', views.horarios_fijos_multiple, name='schedules_multiple'),
+    path('schedules/edit-multiple/', views.horarios_fijos_edit_multiple, name='schedules_edit_multiple'),
+    path('schedules/<int:pk>/', views.horario_fijo_detalle, name='schedule_detalle'),
+    path('directivo/schedules/', views.directivo_horarios_monitores, name='directivo_schedules'),
+    
     # ===== AJUSTES MANUALES DE HORAS (HU7A) =====
     path('directivo/ajustes-horas/', views.directivo_ajustes_horas, name='directivo_ajustes_horas'),
     path('directivo/ajustes-horas/<int:pk>/', views.directivo_ajuste_horas_detalle, name='directivo_ajuste_horas_detalle'),
