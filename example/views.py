@@ -5,11 +5,12 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 import jwt
 from datetime import date, timedelta
-from .models import UsuarioPersonalizado, HorarioFijo, AjusteHoras, ConfiguracionSistema
+from .models import UsuarioPersonalizado, HorarioFijo, Asistencia, AjusteHoras, ConfiguracionSistema
 
 from .serializers import (
     LoginSerializer, UsuarioSerializer, UsuarioCreateSerializer,
     HorarioFijoSerializer, HorarioFijoCreateSerializer, HorarioFijoMultipleSerializer, HorarioFijoEditMultipleSerializer,
+    AsistenciaSerializer, AsistenciaCreateSerializer, AsistenciaUpdateSerializer,
     AjusteHorasSerializer, AjusteHorasCreateSerializer,
     ConfiguracionSistemaSerializer, ConfiguracionSistemaCreateSerializer
 )
@@ -456,6 +457,283 @@ def directivo_horarios_monitores(request):
     }
     
     return Response(response_data)
+
+
+# ===== ASISTENCIAS (HU5) =====
+
+@api_view(['GET', 'POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def asistencias(request):
+    """
+    HU5: Gestión de asistencias
+    GET: Listar asistencias del usuario autenticado con filtros opcionales
+    POST: Crear nueva asistencia
+    """
+    # Obtener usuario desde el token JWT
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido', 'code': 'token_required'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    token = auth_header.split(' ')[1]
+    try:
+        payload = AccessToken(token)
+        user_id = payload.get('user_id')
+    except Exception:
+        try:
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get('user_id')
+        except Exception as e:
+            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    try:
+        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'GET':
+        # Parámetros de filtrado opcionales
+        fecha_inicio_str = request.query_params.get('fecha_inicio')
+        fecha_fin_str = request.query_params.get('fecha_fin')
+        estado = request.query_params.get('estado')
+        horario_id = request.query_params.get('horario_id')
+        
+        # Query base: asistencias del usuario
+        asistencias_qs = Asistencia.objects.filter(usuario=usuario).select_related('usuario', 'horario')
+        
+        # Aplicar filtros
+        if fecha_inicio_str:
+            try:
+                fecha_inicio = date.fromisoformat(fecha_inicio_str)
+                asistencias_qs = asistencias_qs.filter(fecha__gte=fecha_inicio)
+            except ValueError:
+                return Response({'detail': 'Formato de fecha_inicio inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if fecha_fin_str:
+            try:
+                fecha_fin = date.fromisoformat(fecha_fin_str)
+                asistencias_qs = asistencias_qs.filter(fecha__lte=fecha_fin)
+            except ValueError:
+                return Response({'detail': 'Formato de fecha_fin inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if estado:
+            if estado not in ['pendiente', 'autorizado', 'rechazado']:
+                return Response({'detail': 'Estado debe ser: pendiente, autorizado o rechazado'}, status=status.HTTP_400_BAD_REQUEST)
+            asistencias_qs = asistencias_qs.filter(estado_autorizacion=estado)
+        
+        if horario_id:
+            try:
+                horario_id = int(horario_id)
+                asistencias_qs = asistencias_qs.filter(horario_id=horario_id)
+            except ValueError:
+                return Response({'detail': 'horario_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = AsistenciaSerializer(asistencias_qs, many=True)
+        
+        # Estadísticas
+        total_asistencias = asistencias_qs.count()
+        total_horas = sum(float(a.horas) for a in asistencias_qs)
+        
+        return Response({
+            'total_asistencias': total_asistencias,
+            'total_horas': total_horas,
+            'asistencias': serializer.data
+        })
+    
+    elif request.method == 'POST':
+        serializer = AsistenciaCreateSerializer(data=request.data, context={'usuario': usuario})
+        if serializer.is_valid():
+            # Obtener el horario
+            horario = HorarioFijo.objects.get(id=serializer.validated_data['horario_id'])
+            
+            # Verificar que el horario pertenezca al usuario
+            if horario.usuario != usuario:
+                return Response(
+                    {'detail': 'El horario especificado no pertenece al usuario autenticado'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Crear la asistencia
+            asistencia = Asistencia.objects.create(
+                usuario=usuario,
+                horario=horario,
+                fecha=serializer.validated_data['fecha'],
+                presente=serializer.validated_data['presente'],
+                horas=serializer.validated_data['horas']
+            )
+            
+            return Response(AsistenciaSerializer(asistencia).data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def asistencia_detalle(request, pk):
+    """
+    HU5: Gestión de asistencias
+    GET: Obtener asistencia específica
+    PUT: Actualizar asistencia
+    DELETE: Eliminar asistencia
+    """
+    # Obtener usuario desde el token JWT
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido', 'code': 'token_required'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    token = auth_header.split(' ')[1]
+    try:
+        payload = AccessToken(token)
+        user_id = payload.get('user_id')
+    except Exception:
+        try:
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get('user_id')
+        except Exception as e:
+            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    try:
+        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Obtener la asistencia
+    try:
+        asistencia = Asistencia.objects.select_related('usuario', 'horario').get(pk=pk, usuario=usuario)
+    except Asistencia.DoesNotExist:
+        return Response({'detail': 'Asistencia no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'GET':
+        serializer = AsistenciaSerializer(asistencia)
+        return Response(serializer.data)
+    
+    elif request.method == 'PUT':
+        serializer = AsistenciaUpdateSerializer(asistencia, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(AsistenciaSerializer(asistencia).data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'DELETE':
+        asistencia.delete()
+        return Response({'detail': 'Asistencia eliminada exitosamente'}, status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_asistencias(request):
+    """
+    HU5: Vista directiva de asistencias
+    Listar todas las asistencias con filtros opcionales
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Parámetros de filtrado
+    usuario_id = request.query_params.get('usuario_id')
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    estado = request.query_params.get('estado')
+    sede = request.query_params.get('sede')
+    
+    # Query base
+    asistencias_qs = Asistencia.objects.all().select_related('usuario', 'horario')
+    
+    # Aplicar filtros
+    if usuario_id:
+        try:
+            usuario_id = int(usuario_id)
+            asistencias_qs = asistencias_qs.filter(usuario__id=usuario_id)
+        except ValueError:
+            return Response({'detail': 'usuario_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if fecha_inicio_str:
+        try:
+            fecha_inicio = date.fromisoformat(fecha_inicio_str)
+            asistencias_qs = asistencias_qs.filter(fecha__gte=fecha_inicio)
+        except ValueError:
+            return Response({'detail': 'Formato de fecha_inicio inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if fecha_fin_str:
+        try:
+            fecha_fin = date.fromisoformat(fecha_fin_str)
+            asistencias_qs = asistencias_qs.filter(fecha__lte=fecha_fin)
+        except ValueError:
+            return Response({'detail': 'Formato de fecha_fin inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if estado:
+        if estado not in ['pendiente', 'autorizado', 'rechazado']:
+            return Response({'detail': 'Estado debe ser: pendiente, autorizado o rechazado'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(estado_autorizacion=estado)
+    
+    if sede:
+        if sede not in ['SA', 'BA']:
+            return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(horario__sede=sede)
+    
+    serializer = AsistenciaSerializer(asistencias_qs, many=True)
+    
+    # Estadísticas
+    total_asistencias = asistencias_qs.count()
+    total_horas = sum(float(a.horas) for a in asistencias_qs)
+    monitores_distintos = asistencias_qs.values('usuario').distinct().count()
+    
+    return Response({
+        'total_asistencias': total_asistencias,
+        'total_horas': total_horas,
+        'monitores_distintos': monitores_distintos,
+        'asistencias': serializer.data
+    })
+
+
+@api_view(['PUT'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_asistencia_autorizar(request, pk):
+    """
+    HU5: Autorización de asistencias por directivos
+    Cambiar el estado de autorización de una asistencia
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Obtener la asistencia
+    try:
+        asistencia = Asistencia.objects.select_related('usuario', 'horario').get(pk=pk)
+    except Asistencia.DoesNotExist:
+        return Response({'detail': 'Asistencia no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Validar estado
+    nuevo_estado = request.data.get('estado_autorizacion')
+    if nuevo_estado not in ['pendiente', 'autorizado', 'rechazado']:
+        return Response(
+            {'detail': 'Estado debe ser: pendiente, autorizado o rechazado'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Actualizar estado
+    asistencia.estado_autorizacion = nuevo_estado
+    asistencia.save()
+    
+    return Response(AsistenciaSerializer(asistencia).data)
 
 
 # ===== AJUSTES MANUALES DE HORAS (HU7A) =====

@@ -90,6 +90,57 @@ class HorarioFijo(models.Model):
         return f"{self.usuario} - {self.get_dia_semana_display()} {self.get_jornada_display()} ({self.get_sede_display()})"
 
 
+class Asistencia(models.Model):
+    """
+    Modelo para registro de asistencia de monitores.
+    Cada asistencia está vinculada a un horario fijo específico.
+    """
+    ESTADOS_AUTORIZACION = [
+        ('pendiente', 'Pendiente'),
+        ('autorizado', 'Autorizado'),
+        ('rechazado', 'Rechazado'),
+    ]
+
+    usuario = models.ForeignKey(
+        UsuarioPersonalizado,
+        on_delete=models.CASCADE,
+        related_name='asistencias',
+        limit_choices_to={'tipo_usuario': 'MONITOR'},
+        help_text="Monitor que registra la asistencia"
+    )
+    horario = models.ForeignKey(
+        HorarioFijo,
+        on_delete=models.CASCADE,
+        related_name='asistencias',
+        help_text="Horario fijo asociado a esta asistencia"
+    )
+    fecha = models.DateField(help_text="Fecha de la asistencia")
+    presente = models.BooleanField(default=False, help_text="Indica si el monitor estuvo presente")
+    estado_autorizacion = models.CharField(
+        max_length=10,
+        choices=ESTADOS_AUTORIZACION,
+        default='pendiente',
+        help_text="Estado de autorización de la asistencia"
+    )
+    horas = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.0,
+        help_text='Horas trabajadas en esta jornada'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, help_text="Fecha y hora de creación del registro")
+    updated_at = models.DateTimeField(auto_now=True, help_text="Fecha y hora de última modificación")
+
+    class Meta:
+        unique_together = ('usuario', 'fecha', 'horario')
+        ordering = ['-fecha', '-created_at']
+        verbose_name = "Asistencia"
+        verbose_name_plural = "Asistencias"
+
+    def __str__(self):
+        return f"{self.usuario.nombre} - {self.fecha} - {self.horario.get_jornada_display()} ({self.get_estado_autorizacion_display()})"
+
+
 class AjusteHoras(models.Model):
     """
     Modelo para ajustes manuales de horas realizados por directivos.
