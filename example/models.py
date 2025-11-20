@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
+from django.utils import timezone
 
 class UsuarioPersonalizado(models.Model):
     """
@@ -90,6 +91,32 @@ class HorarioFijo(models.Model):
         return f"{self.usuario} - {self.get_dia_semana_display()} {self.get_jornada_display()} ({self.get_sede_display()})"
 
 
+class Asistencia(models.Model):
+    """
+    Asistencia semanal basada en el HorarioFijo.
+    """
+    ESTADOS_AUTORIZACION = [
+        ("pendiente", "Pendiente"),
+        ("autorizado", "Autorizado"),
+        ("rechazado", "Rechazado"),
+    ]
+    usuario = models.ForeignKey(UsuarioPersonalizado, on_delete=models.CASCADE, related_name="asistencias")
+    fecha = models.DateField()  # Día específico
+    horario = models.ForeignKey(HorarioFijo, on_delete=models.CASCADE, related_name="asistencias")
+    presente = models.BooleanField(default=False)
+    estado_autorizacion = models.CharField(max_length=10, choices=ESTADOS_AUTORIZACION, default="pendiente")
+    horas = models.DecimalField(max_digits=4, decimal_places=2, default=0.00, help_text="Horas trabajadas en esta jornada")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="Fecha y hora de creación")
+    updated_at = models.DateTimeField(auto_now=True, help_text="Fecha y hora de última modificación")
+
+    class Meta:
+        unique_together = ("usuario", "fecha", "horario")
+
+    def __str__(self):
+        estado = "Presente" if self.presente else "Pendiente"
+        return f"{self.usuario} - {self.fecha} - {self.horario} [{estado} | {self.estado_autorizacion}]"
+
+
 class AjusteHoras(models.Model):
     """
     Modelo para ajustes manuales de horas realizados por directivos.
@@ -109,7 +136,14 @@ class AjusteHoras(models.Model):
         help_text="Cantidad de horas a ajustar (positivo para agregar, negativo para restar)"
     )
     motivo = models.TextField(help_text="Razón del ajuste de horas")
-    # Nota: Campo asistencia eliminado - fuera del alcance del Laboratorio I
+    asistencia = models.ForeignKey(
+        Asistencia, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name="ajustes_horas",
+        help_text="Asistencia relacionada (opcional)"
+    )
     creado_por = models.ForeignKey(
         UsuarioPersonalizado,
         on_delete=models.CASCADE,
