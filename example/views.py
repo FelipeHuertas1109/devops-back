@@ -3,26 +3,118 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.authentication import BaseAuthentication
 import jwt
-from datetime import date, timedelta
+from django.conf import settings
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from django.contrib.auth import authenticate
+from django.utils import timezone
+from datetime import datetime, date
 from .models import UsuarioPersonalizado, HorarioFijo, Asistencia, AjusteHoras, ConfiguracionSistema
 
+def calcular_horas_asistencia(asistencia):
+    """
+    Calcula y actualiza las horas de una asistencia basado en:
+    - presente=True AND estado_autorizacion='autorizado' = 4 horas
+    - Cualquier otro caso = 0 horas
+    """
+    if asistencia.presente and asistencia.estado_autorizacion == 'autorizado':
+        asistencia.horas = 4.00
+    else:
+        asistencia.horas = 0.00
+    return asistencia
+
+
+def calcular_horas_totales_monitor(monitor_id, fecha_inicio, fecha_fin, sede=None, jornada=None):
+    """
+    Calcula las horas totales de un monitor incluyendo asistencias y ajustes de horas.
+    Retorna diccionario con horas_asistencias, horas_ajustes, horas_totales
+    """
+    # Horas de asistencias
+    asistencias_qs = Asistencia.objects.filter(
+        usuario_id=monitor_id,
+        fecha__gte=fecha_inicio,
+        fecha__lte=fecha_fin
+    ).select_related('horario')
+    
+    # Aplicar filtros adicionales si se proporcionan
+    if sede:
+        asistencias_qs = asistencias_qs.filter(horario__sede=sede)
+    if jornada:
+        asistencias_qs = asistencias_qs.filter(horario__jornada=jornada)
+    
+    horas_asistencias = sum(float(asistencia.horas) for asistencia in asistencias_qs)
+    
+    # Horas de ajustes
+    ajustes_qs = AjusteHoras.objects.filter(
+        usuario_id=monitor_id,
+        fecha__gte=fecha_inicio,
+        fecha__lte=fecha_fin
+    )
+    
+    horas_ajustes = sum(float(ajuste.cantidad_horas) for ajuste in ajustes_qs)
+    
+    return {
+        'horas_asistencias': horas_asistencias,
+        'horas_ajustes': horas_ajustes,
+        'horas_totales': horas_asistencias + horas_ajustes,
+        'total_asistencias': asistencias_qs.count(),
+        'total_ajustes': ajustes_qs.count()
+    }
 from .serializers import (
-    LoginSerializer, UsuarioSerializer, UsuarioCreateSerializer,
+    LoginSerializer, TokenSerializer, UsuarioSerializer, UsuarioCreateSerializer,
     HorarioFijoSerializer, HorarioFijoCreateSerializer, HorarioFijoMultipleSerializer, HorarioFijoEditMultipleSerializer,
-    AsistenciaSerializer, AsistenciaCreateSerializer, AsistenciaUpdateSerializer,
-    AjusteHorasSerializer, AjusteHorasCreateSerializer,
+    AsistenciaSerializer, AsistenciaCreateSerializer, AjusteHorasSerializer, AjusteHorasCreateSerializer,
     ConfiguracionSistemaSerializer, ConfiguracionSistemaCreateSerializer
 )
 
-# ===== AUTENTICACIÓN (HU1, HU2) =====
+# Autenticación personalizada para JWT con nuestro modelo
+class UsuarioPersonalizadoJWTAuthentication(BaseAuthentication):
+    def authenticate(self, request):
+        auth_header = request.META.get('HTTP_AUTHORIZATION')
+        print(f"🔍 AUTH DEBUG - Header: {auth_header}")
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            print("❌ AUTH DEBUG - No Bearer token found")
+            return None
+        
+        token = auth_header.split(' ')[1]
+        print(f"🔍 AUTH DEBUG - Token: {token[:50]}...")
+        
+        try:
+            # Decodificar token JWT
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+            print(f"🔍 AUTH DEBUG - Payload: {payload}")
+            
+            user_id = payload.get('user_id')
+            print(f"🔍 AUTH DEBUG - User ID: {user_id}")
+            
+            if not user_id:
+                print("❌ AUTH DEBUG - No user_id in payload")
+                return None
+            
+            # Buscar usuario personalizado
+            usuario = UsuarioPersonalizado.objects.get(pk=user_id)
+            print(f"✅ AUTH DEBUG - Usuario encontrado: {usuario.username} (ID: {usuario.id})")
+            
+            return (usuario, token)
+            
+        except jwt.InvalidTokenError as e:
+            print(f"❌ AUTH DEBUG - JWT Error: {e}")
+            return None
+        except UsuarioPersonalizado.DoesNotExist as e:
+            print(f"❌ AUTH DEBUG - Usuario no existe: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ AUTH DEBUG - Error general: {e}")
+            return None
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_usuario(request):
     """
-    HU2: Login y obtención de token
-    Endpoint para autenticación de usuarios (monitores y directivos)
+    Endpoint para autenticación de usuarios
     """
     serializer = LoginSerializer(data=request.data)
     
@@ -68,7 +160,6 @@ def login_usuario(request):
 @permission_classes([AllowAny])
 def registro_usuario(request):
     """
-    HU1: Registro de monitor
     Endpoint para registrar nuevos usuarios.
     El tipo_usuario se asigna automáticamente como MONITOR.
     """
@@ -97,45 +188,20 @@ def registro_usuario(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def obtener_usuario_actual(request):
     """
     Endpoint para obtener información del usuario autenticado
     """
-    # Obtener usuario desde el token JWT
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return Response({'detail': 'Token de autenticación requerido', 'code': 'token_required'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    token = auth_header.split(' ')[1]
-    try:
-        payload = AccessToken(token)
-        user_id = payload.get('user_id')
-    except Exception:
-        try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_id = payload.get('user_id')
-        except Exception as e:
-            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    try:
-        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
-    except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    serializer = UsuarioSerializer(usuario)
+    serializer = UsuarioSerializer(request.user)
     return Response(serializer.data)
 
-
-# ===== HORARIOS FIJOS (HU3) =====
-
+# Vistas para HorarioFijo
 @api_view(['GET', 'POST'])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@authentication_classes([])  # Deshabilitar autenticación automática
+@permission_classes([AllowAny])  # Permitir acceso para manejar autenticación manual
 def horarios_fijos(request):
     """
-    HU3: Gestión individual de horarios
     GET: Obtener horarios fijos del usuario
     POST: Crear nuevo horario fijo
     """
@@ -156,7 +222,7 @@ def horarios_fijos(request):
     try:
         usuario = UsuarioPersonalizado.objects.get(pk=user_id)
     except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': 'User not found', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
     
     if request.method == 'GET':
         horarios = HorarioFijo.objects.filter(usuario=usuario)
@@ -171,11 +237,10 @@ def horarios_fijos(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET', 'PUT', 'DELETE'])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@authentication_classes([])  # Deshabilitar autenticación automática
+@permission_classes([AllowAny])  # Permitir acceso para manejar autenticación manual
 def horario_fijo_detalle(request, pk):
     """
-    HU3: Gestión individual de horarios
     GET: Obtener horario fijo específico
     PUT: Actualizar horario fijo
     DELETE: Eliminar horario fijo
@@ -197,7 +262,7 @@ def horario_fijo_detalle(request, pk):
     try:
         usuario = UsuarioPersonalizado.objects.get(pk=user_id)
     except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': 'User not found', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
     
     try:
         horario = HorarioFijo.objects.get(pk=pk, usuario=usuario)
@@ -220,13 +285,21 @@ def horario_fijo_detalle(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 @api_view(['POST'])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@authentication_classes([])  # Deshabilitar autenticación automática
+@permission_classes([AllowAny])  # Cambiamos a AllowAny para manejar la autenticación manualmente
 def horarios_fijos_multiple(request):
     """
-    HU3: Operaciones masivas de horarios
     Crear múltiples horarios fijos en una sola petición
     """
+    print("=== INICIO DE VISTA horarios_fijos_multiple ===")
+    print(f"Método HTTP: {request.method}")
+    print(f"URL: {request.path}")
+    print(f"Headers completos: {dict(request.headers)}")
+    print(f"Headers de autorización: {request.headers.get('Authorization', 'No presente')}")
+    print(f"Content-Type: {request.headers.get('Content-Type', 'No especificado')}")
+    print(f"Body de la petición: {request.body}")
+    print(f"Data de la petición: {request.data}")
+    
     # Verificar autenticación manualmente y obtener usuario desde el token
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
@@ -244,7 +317,7 @@ def horarios_fijos_multiple(request):
     try:
         usuario = UsuarioPersonalizado.objects.get(pk=user_id)
     except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': 'User not found', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
     
     serializer = HorarioFijoMultipleSerializer(data=request.data)
     
@@ -299,19 +372,29 @@ def horarios_fijos_multiple(request):
             response_data['mensaje'] += f", {len(errores)} con errores"
             return Response(response_data, status=status.HTTP_207_MULTI_STATUS)
         
+        print(f"✅ Respuesta exitosa: {response_data}")
         return Response(response_data, status=status.HTTP_201_CREATED)
     
+    print(f"❌ Errores de validación: {serializer.errors}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(['PUT', 'POST'])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@api_view(['PUT', 'POST'])  # Permitir tanto PUT como POST
+@authentication_classes([])  # Deshabilitar autenticación automática
+@permission_classes([AllowAny])  # Cambiamos a AllowAny para manejar la autenticación manualmente
 def horarios_fijos_edit_multiple(request):
     """
-    HU3: Operaciones masivas de horarios
     Editar múltiples horarios fijos en una sola petición
     Esta funcionalidad reemplaza TODOS los horarios existentes del usuario con los nuevos
     """
+    print("=== INICIO DE VISTA horarios_fijos_edit_multiple ===")
+    print(f"Método HTTP: {request.method}")
+    print(f"URL: {request.path}")
+    print(f"Headers completos: {dict(request.headers)}")
+    print(f"Headers de autorización: {request.headers.get('Authorization', 'No presente')}")
+    print(f"Content-Type: {request.headers.get('Content-Type', 'No especificado')}")
+    print(f"Body de la petición: {request.body}")
+    print(f"Data de la petición: {request.data}")
+    
     # Verificar autenticación manualmente y obtener usuario desde el token
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
@@ -329,7 +412,7 @@ def horarios_fijos_edit_multiple(request):
     try:
         usuario = UsuarioPersonalizado.objects.get(pk=user_id)
     except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': 'User not found', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
     
     serializer = HorarioFijoEditMultipleSerializer(data=request.data)
     
@@ -339,6 +422,7 @@ def horarios_fijos_edit_multiple(request):
         # Eliminar todos los horarios existentes del usuario
         horarios_eliminados = HorarioFijo.objects.filter(usuario=usuario).count()
         HorarioFijo.objects.filter(usuario=usuario).delete()
+        print(f"Eliminados {horarios_eliminados} horarios existentes")
         
         # Crear los nuevos horarios
         horarios_creados = []
@@ -378,21 +462,82 @@ def horarios_fijos_edit_multiple(request):
         if errores:
             response_data['errores'] = errores
             response_data['mensaje'] += f", {len(errores)} con errores"
+            print(f"⚠️ Respuesta con errores: {response_data}")
             return Response(response_data, status=status.HTTP_207_MULTI_STATUS)
         
+        print(f"✅ Respuesta exitosa: {response_data}")
         return Response(response_data, status=status.HTTP_200_OK)
     
+    print(f"❌ Errores de validación: {serializer.errors}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Vistas para Asistencia
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def asistencias(request):
+    """
+    GET: Obtener asistencias del usuario
+    POST: Crear nueva asistencia
+    """
+    if request.method == 'GET':
+        asistencias = Asistencia.objects.filter(usuario=request.user)
+        serializer = AsistenciaSerializer(asistencias, many=True)
+        return Response(serializer.data)
+    
+    elif request.method == 'POST':
+        serializer = AsistenciaCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(usuario=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# ===== ENDPOINTS PARA DIRECTIVOS (Consulta de Horarios) =====
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def asistencia_detalle(request, pk):
+    """
+    GET: Obtener asistencia específica
+    PUT: Actualizar asistencia
+    DELETE: Eliminar asistencia
+    """
+    try:
+        asistencia = Asistencia.objects.get(pk=pk, usuario=request.user)
+    except Asistencia.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'GET':
+        serializer = AsistenciaSerializer(asistencia)
+        return Response(serializer.data)
+    
+    elif request.method == 'PUT':
+        serializer = AsistenciaCreateSerializer(asistencia, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'DELETE':
+        asistencia.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+# ===== Endpoints para DIRECTIVOS =====
+
+def _parse_fecha(fecha_str: str | None) -> date:
+    if not fecha_str:
+        return date.today()
+    try:
+        return datetime.strptime(fecha_str, "%Y-%m-%d").date()
+    except Exception:
+        return date.today()
+
+def _dia_semana_de_fecha(fecha_obj: date) -> int:
+    # Python: Monday=0 ... Sunday=6; coincide con nuestro enum
+    return fecha_obj.weekday()
 
 @api_view(['GET'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def directivo_horarios_monitores(request):
     """
-    HU3: Vista directiva de horarios
     Listar todos los horarios fijos de todos los monitores.
     Filtros opcionales: usuario_id, dia_semana, jornada, sede
     Acceso: solo DIRECTIVO
@@ -408,10 +553,10 @@ def directivo_horarios_monitores(request):
         return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
 
     # Parámetros de filtrado
-    usuario_id = request.query_params.get('usuario_id')
-    dia_semana = request.query_params.get('dia_semana')
-    jornada = request.query_params.get('jornada')
-    sede = request.query_params.get('sede')
+    usuario_id = request.query_params.get('usuario_id')  # ID específico de monitor
+    dia_semana = request.query_params.get('dia_semana')  # 0-6
+    jornada = request.query_params.get('jornada')  # M|T
+    sede = request.query_params.get('sede')  # SA|BA
 
     # Query base: solo horarios de monitores
     horarios_qs = HorarioFijo.objects.filter(usuario__tipo_usuario='MONITOR')
@@ -458,292 +603,565 @@ def directivo_horarios_monitores(request):
     
     return Response(response_data)
 
-
-# ===== ASISTENCIAS (HU5) =====
-
-@api_view(['GET', 'POST'])
-@authentication_classes([])
-@permission_classes([AllowAny])
-def asistencias(request):
-    """
-    HU5: Gestión de asistencias
-    GET: Listar asistencias del usuario autenticado con filtros opcionales
-    POST: Crear nueva asistencia
-    """
-    # Obtener usuario desde el token JWT
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return Response({'detail': 'Token de autenticación requerido', 'code': 'token_required'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    token = auth_header.split(' ')[1]
-    try:
-        payload = AccessToken(token)
-        user_id = payload.get('user_id')
-    except Exception:
-        try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_id = payload.get('user_id')
-        except Exception as e:
-            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    try:
-        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
-    except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    if request.method == 'GET':
-        # Parámetros de filtrado opcionales
-        fecha_inicio_str = request.query_params.get('fecha_inicio')
-        fecha_fin_str = request.query_params.get('fecha_fin')
-        estado = request.query_params.get('estado')
-        horario_id = request.query_params.get('horario_id')
-        
-        # Query base: asistencias del usuario
-        asistencias_qs = Asistencia.objects.filter(usuario=usuario).select_related('usuario', 'horario')
-        
-        # Aplicar filtros
-        if fecha_inicio_str:
-            try:
-                fecha_inicio = date.fromisoformat(fecha_inicio_str)
-                asistencias_qs = asistencias_qs.filter(fecha__gte=fecha_inicio)
-            except ValueError:
-                return Response({'detail': 'Formato de fecha_inicio inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if fecha_fin_str:
-            try:
-                fecha_fin = date.fromisoformat(fecha_fin_str)
-                asistencias_qs = asistencias_qs.filter(fecha__lte=fecha_fin)
-            except ValueError:
-                return Response({'detail': 'Formato de fecha_fin inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if estado:
-            if estado not in ['pendiente', 'autorizado', 'rechazado']:
-                return Response({'detail': 'Estado debe ser: pendiente, autorizado o rechazado'}, status=status.HTTP_400_BAD_REQUEST)
-            asistencias_qs = asistencias_qs.filter(estado_autorizacion=estado)
-        
-        if horario_id:
-            try:
-                horario_id = int(horario_id)
-                asistencias_qs = asistencias_qs.filter(horario_id=horario_id)
-            except ValueError:
-                return Response({'detail': 'horario_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        serializer = AsistenciaSerializer(asistencias_qs, many=True)
-        
-        # Estadísticas
-        total_asistencias = asistencias_qs.count()
-        total_horas = sum(float(a.horas) for a in asistencias_qs)
-        
-        return Response({
-            'total_asistencias': total_asistencias,
-            'total_horas': total_horas,
-            'asistencias': serializer.data
-        })
-    
-    elif request.method == 'POST':
-        serializer = AsistenciaCreateSerializer(data=request.data, context={'usuario': usuario})
-        if serializer.is_valid():
-            # Obtener el horario
-            horario = HorarioFijo.objects.get(id=serializer.validated_data['horario_id'])
-            
-            # Verificar que el horario pertenezca al usuario
-            if horario.usuario != usuario:
-                return Response(
-                    {'detail': 'El horario especificado no pertenece al usuario autenticado'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Crear la asistencia
-            asistencia = Asistencia.objects.create(
-                usuario=usuario,
-                horario=horario,
-                fecha=serializer.validated_data['fecha'],
-                presente=serializer.validated_data['presente'],
-                horas=serializer.validated_data['horas']
-            )
-            
-            return Response(AsistenciaSerializer(asistencia).data, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['GET', 'PUT', 'DELETE'])
-@authentication_classes([])
-@permission_classes([AllowAny])
-def asistencia_detalle(request, pk):
-    """
-    HU5: Gestión de asistencias
-    GET: Obtener asistencia específica
-    PUT: Actualizar asistencia
-    DELETE: Eliminar asistencia
-    """
-    # Obtener usuario desde el token JWT
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return Response({'detail': 'Token de autenticación requerido', 'code': 'token_required'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    token = auth_header.split(' ')[1]
-    try:
-        payload = AccessToken(token)
-        user_id = payload.get('user_id')
-    except Exception:
-        try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_id = payload.get('user_id')
-        except Exception as e:
-            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    try:
-        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
-    except UsuarioPersonalizado.DoesNotExist:
-        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    # Obtener la asistencia
-    try:
-        asistencia = Asistencia.objects.select_related('usuario', 'horario').get(pk=pk, usuario=usuario)
-    except Asistencia.DoesNotExist:
-        return Response({'detail': 'Asistencia no encontrada'}, status=status.HTTP_404_NOT_FOUND)
-    
-    if request.method == 'GET':
-        serializer = AsistenciaSerializer(asistencia)
-        return Response(serializer.data)
-    
-    elif request.method == 'PUT':
-        serializer = AsistenciaUpdateSerializer(asistencia, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(AsistenciaSerializer(asistencia).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    elif request.method == 'DELETE':
-        asistencia.delete()
-        return Response({'detail': 'Asistencia eliminada exitosamente'}, status=status.HTTP_204_NO_CONTENT)
-
-
 @api_view(['GET'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def directivo_asistencias(request):
     """
-    HU5: Vista directiva de asistencias
-    Listar todas las asistencias con filtros opcionales
+    Listar todas las asistencias de todos los monitores con filtros.
+    Filtros opcionales: fecha, estado, jornada, sede, usuario_id
     Acceso: solo DIRECTIVO
     """
     # Autenticación manual
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Verificar que el usuario sea DIRECTIVO
+    token = auth_header.split(' ')[1]
+    try:
+        payload = AccessToken(token)
+        user_id = payload.get('user_id')
+    except Exception:
+        try:
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get('user_id')
+        except Exception as e:
+            return Response({'detail': f'Token inválido: {str(e)}', 'code': 'invalid_token'}, status=status.HTTP_401_UNAUTHORIZED)
     
-    # Usuario DIRECTIVO temporal
-    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
-    if not usuario_directivo:
-        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
-    
+    try:
+        usuario = UsuarioPersonalizado.objects.get(pk=user_id)
+        if usuario.tipo_usuario != 'DIRECTIVO':
+            return Response({'detail': 'Acceso denegado. Solo directivos pueden acceder a este endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response({'detail': 'Usuario no encontrado', 'code': 'user_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
     # Parámetros de filtrado
-    usuario_id = request.query_params.get('usuario_id')
-    fecha_inicio_str = request.query_params.get('fecha_inicio')
-    fecha_fin_str = request.query_params.get('fecha_fin')
-    estado = request.query_params.get('estado')
-    sede = request.query_params.get('sede')
-    
-    # Query base
-    asistencias_qs = Asistencia.objects.all().select_related('usuario', 'horario')
+    fecha_str = request.query_params.get('fecha')  # Fecha específica (YYYY-MM-DD)
+    fecha_inicio = request.query_params.get('fecha_inicio')  # Rango inicio
+    fecha_fin = request.query_params.get('fecha_fin')  # Rango fin
+    estado = request.query_params.get('estado')  # pendiente|autorizado|rechazado
+    jornada = request.query_params.get('jornada')  # M|T
+    sede = request.query_params.get('sede')  # SA|BA
+    usuario_id = request.query_params.get('usuario_id')  # ID específico de monitor
+
+    # Query base: solo asistencias de monitores
+    asistencias_qs = Asistencia.objects.filter(usuario__tipo_usuario='MONITOR').select_related('usuario', 'horario')
     
     # Aplicar filtros
+    if fecha_str:
+        try:
+            # Intentar formato YYYY-MM-DD primero
+            fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        except ValueError:
+            try:
+                # Intentar formato MM/DD/YYYY (formato del frontend)
+                fecha_obj = datetime.strptime(fecha_str, "%m/%d/%Y").date()
+            except ValueError:
+                return Response({'detail': 'Formato de fecha inválido. Use YYYY-MM-DD o MM/DD/YYYY'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(fecha=fecha_obj)
+    elif fecha_inicio or fecha_fin:
+        if fecha_inicio:
+            try:
+                fecha_inicio_obj = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+                asistencias_qs = asistencias_qs.filter(fecha__gte=fecha_inicio_obj)
+            except ValueError:
+                return Response({'detail': 'Formato de fecha_inicio inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+        if fecha_fin:
+            try:
+                fecha_fin_obj = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+                asistencias_qs = asistencias_qs.filter(fecha__lte=fecha_fin_obj)
+            except ValueError:
+                return Response({'detail': 'Formato de fecha_fin inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if estado and estado.lower() != 'todos':
+        if estado not in ['pendiente', 'autorizado', 'rechazado']:
+            return Response({'detail': 'estado debe ser: pendiente, autorizado o rechazado'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(estado_autorizacion=estado)
+    
+    if jornada and jornada.lower() != 'todas':
+        if jornada not in ['M', 'T']:
+            return Response({'detail': 'jornada debe ser M o T'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(horario__jornada=jornada)
+    
+    if sede and sede.lower() != 'todas':
+        if sede not in ['SA', 'BA']:
+            return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+        asistencias_qs = asistencias_qs.filter(horario__sede=sede)
+    
     if usuario_id:
         try:
             usuario_id = int(usuario_id)
             asistencias_qs = asistencias_qs.filter(usuario__id=usuario_id)
         except ValueError:
             return Response({'detail': 'usuario_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Ordenar por fecha (más reciente primero) y luego por usuario
+    asistencias_qs = asistencias_qs.order_by('-fecha', 'usuario__nombre', 'horario__jornada')
     
-    if fecha_inicio_str:
-        try:
-            fecha_inicio = date.fromisoformat(fecha_inicio_str)
-            asistencias_qs = asistencias_qs.filter(fecha__gte=fecha_inicio)
-        except ValueError:
-            return Response({'detail': 'Formato de fecha_inicio inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    if fecha_fin_str:
-        try:
-            fecha_fin = date.fromisoformat(fecha_fin_str)
-            asistencias_qs = asistencias_qs.filter(fecha__lte=fecha_fin)
-        except ValueError:
-            return Response({'detail': 'Formato de fecha_fin inválido. Use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    if estado:
-        if estado not in ['pendiente', 'autorizado', 'rechazado']:
-            return Response({'detail': 'Estado debe ser: pendiente, autorizado o rechazado'}, status=status.HTTP_400_BAD_REQUEST)
-        asistencias_qs = asistencias_qs.filter(estado_autorizacion=estado)
-    
-    if sede:
-        if sede not in ['SA', 'BA']:
-            return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
-        asistencias_qs = asistencias_qs.filter(horario__sede=sede)
-    
+    # Serializar y responder
     serializer = AsistenciaSerializer(asistencias_qs, many=True)
     
-    # Estadísticas
+    # Calcular estadísticas
     total_asistencias = asistencias_qs.count()
-    total_horas = sum(float(a.horas) for a in asistencias_qs)
+    total_horas = sum(float(asistencia.horas) for asistencia in asistencias_qs)
     monitores_distintos = asistencias_qs.values('usuario').distinct().count()
     
-    return Response({
+    # Preparar respuesta con formato para el frontend
+    asistencias_data = []
+    for asistencia in asistencias_qs:
+        asistencias_data.append({
+            'id': asistencia.id,
+            'monitor': asistencia.usuario.nombre,
+            'monitor_id': asistencia.usuario.id,
+            'monitor_username': asistencia.usuario.username,
+            'dia': asistencia.fecha.strftime('%Y-%m-%d'),
+            'dia_display': asistencia.fecha.strftime('%d/%m/%Y'),
+            'jornada': asistencia.horario.jornada,
+            'jornada_display': asistencia.horario.get_jornada_display(),
+            'sede': asistencia.horario.sede,
+            'sede_display': asistencia.horario.get_sede_display(),
+            'marcado': asistencia.presente,
+            'estado': asistencia.estado_autorizacion,
+            'estado_display': asistencia.get_estado_autorizacion_display(),
+            'horas': float(asistencia.horas)
+        })
+    
+    response_data = {
         'total_asistencias': total_asistencias,
         'total_horas': total_horas,
         'monitores_distintos': monitores_distintos,
-        'asistencias': serializer.data
-    })
+        'asistencias': asistencias_data
+    }
+    
+    return Response(response_data)
 
-
-@api_view(['PUT'])
+@api_view(['POST'])
 @authentication_classes([])
 @permission_classes([AllowAny])
-def directivo_asistencia_autorizar(request, pk):
+def directivo_autorizar_asistencia(request, pk):
+    # Auth manual y rol DIRECTIVO
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        asistencia = Asistencia.objects.get(pk=pk)
+    except Asistencia.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    asistencia.estado_autorizacion = 'autorizado'
+    calcular_horas_asistencia(asistencia)
+    asistencia.save()
+    return Response(AsistenciaSerializer(asistencia).data)
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_rechazar_asistencia(request, pk):
+    # Auth manual y rol DIRECTIVO
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        asistencia = Asistencia.objects.get(pk=pk)
+    except Asistencia.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    asistencia.estado_autorizacion = 'rechazado'
+    calcular_horas_asistencia(asistencia)
+    asistencia.save()
+    return Response(AsistenciaSerializer(asistencia).data)
+
+# ===== Endpoints para REPORTES =====
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_reporte_horas_monitor(request, monitor_id):
     """
-    HU5: Autorización de asistencias por directivos
-    Cambiar el estado de autorización de una asistencia
+    Reporte de horas trabajadas por un monitor específico.
+    Filtros: fecha_inicio, fecha_fin, sede, jornada
     Acceso: solo DIRECTIVO
     """
     # Autenticación manual
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
-    
+
     # Usuario DIRECTIVO temporal
     usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
     if not usuario_directivo:
         return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
-    
-    # Obtener la asistencia
+
+    # Verificar que el monitor existe
     try:
-        asistencia = Asistencia.objects.select_related('usuario', 'horario').get(pk=pk)
-    except Asistencia.DoesNotExist:
-        return Response({'detail': 'Asistencia no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        monitor = UsuarioPersonalizado.objects.get(id=monitor_id, tipo_usuario='MONITOR')
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response({'detail': 'Monitor no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Parámetros de filtrado
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    sede = request.query_params.get('sede')  # SA|BA
+    jornada = request.query_params.get('jornada')  # M|T
+
+    # Fechas por defecto: último mes
+    if not fecha_inicio_str:
+        from datetime import date, timedelta
+        fecha_inicio = date.today() - timedelta(days=30)
+    else:
+        fecha_inicio = _parse_fecha(fecha_inicio_str)
     
-    # Validar estado
-    nuevo_estado = request.data.get('estado_autorizacion')
-    if nuevo_estado not in ['pendiente', 'autorizado', 'rechazado']:
+    if not fecha_fin_str:
+        fecha_fin = date.today()
+    else:
+        fecha_fin = _parse_fecha(fecha_fin_str)
+
+    # Validar filtros
+    if sede and sede not in ['SA', 'BA']:
+        return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+    if jornada and jornada not in ['M', 'T']:
+        return Response({'detail': 'jornada debe ser M o T'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Calcular horas totales incluyendo ajustes
+    calculo_horas = calcular_horas_totales_monitor(monitor_id, fecha_inicio, fecha_fin, sede, jornada)
+
+    # Query asistencias para el detalle
+    asistencias_qs = Asistencia.objects.filter(
+        usuario=monitor,
+        fecha__gte=fecha_inicio,
+        fecha__lte=fecha_fin
+    ).select_related('horario')
+
+    # Aplicar filtros adicionales para asistencias
+    if sede:
+        asistencias_qs = asistencias_qs.filter(horario__sede=sede)
+    if jornada:
+        asistencias_qs = asistencias_qs.filter(horario__jornada=jornada)
+
+    # Estadísticas de asistencias
+    asistencias_presentes = asistencias_qs.filter(presente=True).count()
+    asistencias_autorizadas = asistencias_qs.filter(estado_autorizacion='autorizado').count()
+    
+    # Agrupar asistencias por fecha para el detalle
+    asistencias_por_fecha = {}
+    for asistencia in asistencias_qs.order_by('fecha', 'horario__jornada'):
+        fecha_str = asistencia.fecha.strftime('%Y-%m-%d')
+        if fecha_str not in asistencias_por_fecha:
+            asistencias_por_fecha[fecha_str] = []
+        asistencias_por_fecha[fecha_str].append(AsistenciaSerializer(asistencia).data)
+
+    # Query ajustes para el detalle
+    ajustes_qs = AjusteHoras.objects.filter(
+        usuario=monitor,
+        fecha__gte=fecha_inicio,
+        fecha__lte=fecha_fin
+    ).select_related('creado_por', 'asistencia')
+
+    # Agrupar ajustes por fecha
+    ajustes_por_fecha = {}
+    for ajuste in ajustes_qs.order_by('fecha', 'created_at'):
+        fecha_str = ajuste.fecha.strftime('%Y-%m-%d')
+        if fecha_str not in ajustes_por_fecha:
+            ajustes_por_fecha[fecha_str] = []
+        ajustes_por_fecha[fecha_str].append(AjusteHorasSerializer(ajuste).data)
+
+    # Respuesta
+    response_data = {
+        'monitor': {
+            'id': monitor.id,
+            'username': monitor.username,
+            'nombre': monitor.nombre
+        },
+        'periodo': {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d')
+        },
+        'estadisticas': {
+            'horas_asistencias': round(calculo_horas['horas_asistencias'], 2),
+            'horas_ajustes': round(calculo_horas['horas_ajustes'], 2),
+            'total_horas': round(calculo_horas['horas_totales'], 2),
+            'total_asistencias': calculo_horas['total_asistencias'],
+            'total_ajustes': calculo_horas['total_ajustes'],
+            'asistencias_presentes': asistencias_presentes,
+            'asistencias_autorizadas': asistencias_autorizadas,
+            'promedio_horas_por_dia': round(calculo_horas['horas_totales'] / max(1, (fecha_fin - fecha_inicio).days + 1), 2)
+        },
+        'filtros_aplicados': {
+            'sede': sede,
+            'jornada': jornada
+        },
+        'detalle_por_fecha': asistencias_por_fecha,
+        'ajustes_por_fecha': ajustes_por_fecha
+    }
+
+    return Response(response_data)
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_reporte_horas_todos(request):
+    """
+    Reporte de horas trabajadas por todos los monitores.
+    Filtros: fecha_inicio, fecha_fin, sede, jornada
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Parámetros de filtrado
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    sede = request.query_params.get('sede')  # SA|BA
+    jornada = request.query_params.get('jornada')  # M|T
+
+    # Fechas por defecto: último mes
+    if not fecha_inicio_str:
+        from datetime import date, timedelta
+        fecha_inicio = date.today() - timedelta(days=30)
+    else:
+        fecha_inicio = _parse_fecha(fecha_inicio_str)
+    
+    if not fecha_fin_str:
+        fecha_fin = date.today()
+    else:
+        fecha_fin = _parse_fecha(fecha_fin_str)
+
+    # Validar filtros
+    if sede and sede not in ['SA', 'BA']:
+        return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+    if jornada and jornada not in ['M', 'T']:
+        return Response({'detail': 'jornada debe ser M o T'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener todos los monitores
+    monitores = UsuarioPersonalizado.objects.filter(tipo_usuario='MONITOR')
+    
+    # Calcular datos para cada monitor
+    monitores_data = {}
+    total_horas_general = 0.0
+    total_asistencias_general = 0
+    total_ajustes_general = 0
+    
+    for monitor in monitores:
+        # Calcular horas totales incluyendo ajustes
+        calculo_horas = calcular_horas_totales_monitor(monitor.id, fecha_inicio, fecha_fin, sede, jornada)
+        
+        # Solo incluir monitores que tienen datos en el período
+        if calculo_horas['total_asistencias'] > 0 or calculo_horas['total_ajustes'] > 0:
+            # Query asistencias para el detalle
+            asistencias_qs = Asistencia.objects.filter(
+                usuario=monitor,
+                fecha__gte=fecha_inicio,
+                fecha__lte=fecha_fin
+            ).select_related('horario')
+
+            # Aplicar filtros a asistencias
+            if sede:
+                asistencias_qs = asistencias_qs.filter(horario__sede=sede)
+            if jornada:
+                asistencias_qs = asistencias_qs.filter(horario__jornada=jornada)
+
+            asistencias_presentes = asistencias_qs.filter(presente=True).count()
+            asistencias_autorizadas = asistencias_qs.filter(estado_autorizacion='autorizado').count()
+
+            # Query ajustes para el detalle
+            ajustes_qs = AjusteHoras.objects.filter(
+                usuario=monitor,
+                fecha__gte=fecha_inicio,
+                fecha__lte=fecha_fin
+            ).select_related('creado_por', 'asistencia')
+
+            monitores_data[monitor.id] = {
+                'monitor': {
+                    'id': monitor.id,
+                    'username': monitor.username,
+                    'nombre': monitor.nombre
+                },
+                'horas_asistencias': round(calculo_horas['horas_asistencias'], 2),
+                'horas_ajustes': round(calculo_horas['horas_ajustes'], 2),
+                'total_horas': round(calculo_horas['horas_totales'], 2),
+                'total_asistencias': calculo_horas['total_asistencias'],
+                'total_ajustes': calculo_horas['total_ajustes'],
+                'asistencias_presentes': asistencias_presentes,
+                'asistencias_autorizadas': asistencias_autorizadas,
+                'asistencias': [AsistenciaSerializer(a).data for a in asistencias_qs],
+                'ajustes': [AjusteHorasSerializer(aj).data for aj in ajustes_qs]
+            }
+            
+            # Acumular estadísticas generales
+            total_horas_general += calculo_horas['horas_totales']
+            total_asistencias_general += calculo_horas['total_asistencias']
+            total_ajustes_general += calculo_horas['total_ajustes']
+
+    total_monitores = len(monitores_data)
+
+    # Ordenar monitores por horas trabajadas (descendente)
+    monitores_ordenados = sorted(
+        monitores_data.values(),
+        key=lambda x: x['total_horas'],
+        reverse=True
+    )
+
+    # Respuesta
+    response_data = {
+        'periodo': {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d')
+        },
+        'estadisticas_generales': {
+            'total_horas': round(total_horas_general, 2),
+            'total_asistencias': total_asistencias_general,
+            'total_ajustes': total_ajustes_general,
+            'total_monitores': total_monitores,
+            'promedio_horas_por_monitor': round(total_horas_general / max(1, total_monitores), 2)
+        },
+        'filtros_aplicados': {
+            'sede': sede,
+            'jornada': jornada
+        },
+        'monitores': monitores_ordenados
+    }
+
+    return Response(response_data)
+
+# ===== Endpoints para MONITORES =====
+
+@api_view(['GET'])
+@authentication_classes([UsuarioPersonalizadoJWTAuthentication])
+@permission_classes([IsAuthenticated])
+def monitor_mis_asistencias(request):
+    """
+    Lista (y genera si faltan) las asistencias del usuario MONITOR para la fecha (por defecto hoy)
+    """
+    usuario = request.user
+    print(f"=== MONITOR MIS ASISTENCIAS - Usuario autenticado: {usuario.username} (ID: {usuario.id}) ===")
+    
+    if usuario.tipo_usuario != 'MONITOR':
+        return Response({'detail': 'Solo monitores pueden acceder a este endpoint'}, status=status.HTTP_403_FORBIDDEN)
+
+    fecha_obj = _parse_fecha(request.query_params.get('fecha'))
+    dia_semana = _dia_semana_de_fecha(fecha_obj)
+
+    horarios_qs = HorarioFijo.objects.filter(usuario=usuario, dia_semana=dia_semana)
+
+    # Generar asistencias si faltan
+    for h in horarios_qs:
+        Asistencia.objects.get_or_create(
+            usuario=usuario,
+            fecha=fecha_obj,
+            horario=h,
+            defaults={'presente': False, 'estado_autorizacion': 'pendiente', 'horas': 0.00}
+        )
+
+    asistencias_qs = Asistencia.objects.filter(usuario=usuario, fecha=fecha_obj)
+    serializer = AsistenciaSerializer(asistencias_qs.select_related('usuario', 'horario'), many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@authentication_classes([UsuarioPersonalizadoJWTAuthentication])
+@permission_classes([IsAuthenticated])
+def monitor_marcar(request):
+    """
+    Body: { "fecha": "YYYY-MM-DD", "jornada": "M|T" }
+    Marca presente=True en la asistencia del bloque correspondiente si el usuario tiene HorarioFijo.
+    
+    REGLAS DE MARCADO:
+    - Los monitores pueden marcar CUALQUIER JORNADA durante TODO EL DÍA si está autorizada
+    - Pueden marcar asistencia de MAÑANA en la TARDE y viceversa
+    - Solo importa que sea el mismo día y que esté autorizada por un directivo
+    - No hay restricciones de horario - pueden marcar a cualquier hora del día
+    - No se puede marcar fechas futuras
+    """
+    usuario = request.user
+    print(f"=== MONITOR MARCAR - Usuario autenticado: {usuario.username} (ID: {usuario.id}) ===")
+    
+    if usuario.tipo_usuario != 'MONITOR':
+        return Response({'detail': 'Solo monitores pueden marcar asistencia'}, status=status.HTTP_403_FORBIDDEN)
+
+    fecha_obj = _parse_fecha(request.data.get('fecha'))
+    jornada = request.data.get('jornada')
+    
+    # Validar jornada
+    if jornada not in ['M', 'T']:
+        return Response({'detail': 'Jornada inválida. Debe ser M (Mañana) o T (Tarde)'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Validar que no sea fecha futura
+    from datetime import date
+    if fecha_obj > date.today():
+        return Response({'detail': 'No puedes marcar asistencia para fechas futuras'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Buscar el horario fijo del usuario para ese día y jornada
+    dia_semana = _dia_semana_de_fecha(fecha_obj)
+    try:
+        horario = HorarioFijo.objects.get(usuario=usuario, dia_semana=dia_semana, jornada=jornada)
+    except HorarioFijo.DoesNotExist:
+        return Response({'detail': 'No tienes horario asignado para esa jornada en este día'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Crear o obtener la asistencia
+    asistencia, created = Asistencia.objects.get_or_create(
+        usuario=usuario,
+        fecha=fecha_obj,
+        horario=horario,
+        defaults={'presente': False, 'estado_autorizacion': 'pendiente', 'horas': 0.00}
+    )
+
+    # Solo permite marcar si el bloque fue autorizado por un DIRECTIVO
+    if asistencia.estado_autorizacion != 'autorizado':
         return Response(
-            {'detail': 'Estado debe ser: pendiente, autorizado o rechazado'},
+            {
+                'detail': 'Esta jornada aún no ha sido autorizada por un directivo.',
+                'code': 'not_authorized',
+                'jornada': jornada,
+                'fecha': fecha_obj.strftime('%Y-%m-%d')
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Verificar si ya está marcada como presente
+    if asistencia.presente:
+        return Response(
+            {
+                'detail': 'Ya has marcado asistencia para esta jornada',
+                'jornada': jornada,
+                'fecha': fecha_obj.strftime('%Y-%m-%d'),
+                'asistencia': AsistenciaSerializer(asistencia).data
+            },
             status=status.HTTP_400_BAD_REQUEST
         )
-    
-    # Actualizar estado
-    asistencia.estado_autorizacion = nuevo_estado
+
+    # Marcar como presente y calcular horas
+    asistencia.presente = True
+    calcular_horas_asistencia(asistencia)
     asistencia.save()
-    
-    return Response(AsistenciaSerializer(asistencia).data)
+
+    return Response({
+        'mensaje': f'Asistencia marcada exitosamente para {jornada}',
+        'asistencia': AsistenciaSerializer(asistencia).data
+    })
 
 
-# ===== AJUSTES MANUALES DE HORAS (HU7A) =====
+# ===== Endpoints para AJUSTES DE HORAS =====
 
 @api_view(['GET', 'POST'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def directivo_ajustes_horas(request):
     """
-    HU7A: Ajustes manuales de horas
     GET: Listar ajustes de horas con filtros opcionales
     POST: Crear nuevo ajuste de horas
     Acceso: solo DIRECTIVO
@@ -765,7 +1183,7 @@ def directivo_ajustes_horas(request):
         fecha_fin_str = request.query_params.get('fecha_fin')
         
         # Query base
-        ajustes_qs = AjusteHoras.objects.all().select_related('usuario', 'creado_por')
+        ajustes_qs = AjusteHoras.objects.all().select_related('usuario', 'creado_por', 'asistencia')
         
         # Aplicar filtros
         if monitor_id:
@@ -777,20 +1195,15 @@ def directivo_ajustes_horas(request):
         
         # Fechas por defecto: último mes
         if not fecha_inicio_str:
+            from datetime import date, timedelta
             fecha_inicio = date.today() - timedelta(days=30)
         else:
-            try:
-                fecha_inicio = date.fromisoformat(fecha_inicio_str)
-            except ValueError:
-                fecha_inicio = date.today() - timedelta(days=30)
+            fecha_inicio = _parse_fecha(fecha_inicio_str)
         
         if not fecha_fin_str:
             fecha_fin = date.today()
         else:
-            try:
-                fecha_fin = date.fromisoformat(fecha_fin_str)
-            except ValueError:
-                fecha_fin = date.today()
+            fecha_fin = _parse_fecha(fecha_fin_str)
         
         # Filtrar por rango de fechas
         ajustes_qs = ajustes_qs.filter(fecha__gte=fecha_inicio, fecha__lte=fecha_fin)
@@ -824,8 +1237,11 @@ def directivo_ajustes_horas(request):
     elif request.method == 'POST':
         serializer = AjusteHorasCreateSerializer(data=request.data)
         if serializer.is_valid():
-            # Obtener instancia del monitor
+            # Obtener instancias
             monitor = UsuarioPersonalizado.objects.get(id=serializer.validated_data['monitor_id'])
+            asistencia = None
+            if serializer.validated_data.get('asistencia_id'):
+                asistencia = Asistencia.objects.get(id=serializer.validated_data['asistencia_id'])
             
             # Crear ajuste
             ajuste = AjusteHoras.objects.create(
@@ -833,6 +1249,7 @@ def directivo_ajustes_horas(request):
                 fecha=serializer.validated_data['fecha'],
                 cantidad_horas=serializer.validated_data['cantidad_horas'],
                 motivo=serializer.validated_data['motivo'],
+                asistencia=asistencia,
                 creado_por=usuario_directivo
             )
             
@@ -846,7 +1263,6 @@ def directivo_ajustes_horas(request):
 @permission_classes([AllowAny])
 def directivo_ajuste_horas_detalle(request, pk):
     """
-    HU7A: Ajustes manuales de horas
     GET: Obtener detalles de un ajuste específico
     DELETE: Eliminar ajuste de horas
     Acceso: solo DIRECTIVO
@@ -863,7 +1279,7 @@ def directivo_ajuste_horas_detalle(request, pk):
 
     # Verificar que el ajuste existe
     try:
-        ajuste = AjusteHoras.objects.select_related('usuario', 'creado_por').get(id=pk)
+        ajuste = AjusteHoras.objects.select_related('usuario', 'creado_por', 'asistencia').get(id=pk)
     except AjusteHoras.DoesNotExist:
         return Response({'detail': 'Ajuste de horas no encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -876,14 +1292,611 @@ def directivo_ajuste_horas_detalle(request, pk):
         return Response({'detail': 'Ajuste de horas eliminado exitosamente'}, status=status.HTTP_204_NO_CONTENT)
 
 
-# ===== CONFIGURACIONES DEL SISTEMA (HU9) =====
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_buscar_monitores(request):
+    """
+    Buscar monitores por nombre o username.
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Parámetro de búsqueda
+    busqueda = request.query_params.get('q', '').strip()
+    
+    if not busqueda:
+        return Response({'detail': 'Parámetro de búsqueda "q" es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if len(busqueda) < 2:
+        return Response({'detail': 'La búsqueda debe tener al menos 2 caracteres'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Buscar monitores por nombre o username (case-insensitive)
+    from django.db.models import Q
+    monitores = UsuarioPersonalizado.objects.filter(
+        tipo_usuario='MONITOR'
+    ).filter(
+        Q(nombre__icontains=busqueda) | Q(username__icontains=busqueda)
+    ).order_by('nombre')[:20]  # Limitar a 20 resultados
+
+    # Serializar resultados
+    resultados = []
+    for monitor in monitores:
+        resultados.append({
+            'id': monitor.id,
+            'username': monitor.username,
+            'nombre': monitor.nombre
+        })
+
+    response_data = {
+        'busqueda': busqueda,
+        'total_encontrados': len(resultados),
+        'monitores': resultados
+    }
+
+    return Response(response_data)
+
+
+# ===== Endpoints para FINANZAS =====
+
+def obtener_configuracion(clave, valor_por_defecto=None):
+    """
+    Obtiene el valor de una configuración del sistema.
+    Si no existe, retorna el valor por defecto.
+    """
+    try:
+        config = ConfiguracionSistema.objects.get(clave=clave)
+        return config.get_valor_tipado()
+    except ConfiguracionSistema.DoesNotExist:
+        return valor_por_defecto
+
+def obtener_costo_por_hora():
+    """
+    Obtiene el costo por hora desde las configuraciones.
+    Por defecto: 9965 COP
+    """
+    return obtener_configuracion('costo_por_hora', 9965.0)
+
+def obtener_semanas_semestre():
+    """
+    Obtiene el total de semanas del semestre desde las configuraciones.
+    Por defecto: 14 semanas
+    """
+    return obtener_configuracion('semanas_semestre', 14)
+
+def calcular_horas_semanales_monitor(monitor_id):
+    """
+    Calcula las horas semanales que debe trabajar un monitor basado en sus horarios fijos.
+    Cada jornada (M/T) = 4 horas.
+    """
+    horarios = HorarioFijo.objects.filter(usuario_id=monitor_id)
+    total_horas_semana = horarios.count() * 4  # 4 horas por jornada
+    return total_horas_semana
+
+def calcular_costo_total_monitor(monitor_id, fecha_inicio, fecha_fin):
+    """
+    Calcula el costo total que debe recibir un monitor en un período.
+    Incluye horas de asistencias + ajustes de horas.
+    """
+    calculo_horas = calcular_horas_totales_monitor(monitor_id, fecha_inicio, fecha_fin)
+    costo_por_hora = obtener_costo_por_hora()
+    costo_total = calculo_horas['horas_totales'] * costo_por_hora
+    return round(costo_total, 2)
+
+def calcular_costo_proyectado_monitor(monitor_id, semanas_trabajadas, total_semanas=None):
+    """
+    Calcula el costo proyectado de un monitor basado en sus horarios fijos.
+    """
+    if total_semanas is None:
+        total_semanas = obtener_semanas_semestre()
+    
+    horas_semanales = calcular_horas_semanales_monitor(monitor_id)
+    horas_totales_proyectadas = horas_semanales * total_semanas
+    horas_trabajadas_proyectadas = horas_semanales * semanas_trabajadas
+    costo_por_hora = obtener_costo_por_hora()
+    
+    return {
+        'horas_semanales': horas_semanales,
+        'horas_totales_proyectadas': horas_totales_proyectadas,
+        'horas_trabajadas_proyectadas': horas_trabajadas_proyectadas,
+        'costo_total_proyectado': round(horas_totales_proyectadas * costo_por_hora, 2),
+        'costo_trabajado_proyectado': round(horas_trabajadas_proyectadas * costo_por_hora, 2),
+        'semanas_trabajadas': semanas_trabajadas,
+        'semanas_faltantes': total_semanas - semanas_trabajadas
+    }
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_finanzas_monitor_individual(request, monitor_id):
+    """
+    Reporte financiero individual de un monitor específico.
+    Incluye costo actual, proyectado, horas semanales, etc.
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Verificar que el monitor existe
+    try:
+        monitor = UsuarioPersonalizado.objects.get(id=monitor_id, tipo_usuario='MONITOR')
+    except UsuarioPersonalizado.DoesNotExist:
+        return Response({'detail': 'Monitor no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Parámetros de filtrado
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    semanas_trabajadas = request.query_params.get('semanas_trabajadas', 8)  # Por defecto 8 semanas
+
+    # Fechas por defecto: último mes
+    if not fecha_inicio_str:
+        from datetime import date, timedelta
+        fecha_inicio = date.today() - timedelta(days=30)
+    else:
+        fecha_inicio = _parse_fecha(fecha_inicio_str)
+    
+    if not fecha_fin_str:
+        fecha_fin = date.today()
+    else:
+        fecha_fin = _parse_fecha(fecha_fin_str)
+
+    # Validar semanas_trabajadas
+    try:
+        semanas_trabajadas = int(semanas_trabajadas)
+        max_semanas = obtener_semanas_semestre()
+        if semanas_trabajadas < 0 or semanas_trabajadas > max_semanas:
+            return Response({'detail': f'semanas_trabajadas debe estar entre 0 y {max_semanas}'}, status=status.HTTP_400_BAD_REQUEST)
+    except ValueError:
+        return Response({'detail': 'semanas_trabajadas debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Calcular horas y costos
+    calculo_horas = calcular_horas_totales_monitor(monitor_id, fecha_inicio, fecha_fin)
+    costo_actual = calcular_costo_total_monitor(monitor_id, fecha_inicio, fecha_fin)
+    proyeccion = calcular_costo_proyectado_monitor(monitor_id, semanas_trabajadas)
+
+    # Información de horarios
+    horarios = HorarioFijo.objects.filter(usuario=monitor)
+    horarios_por_dia = {}
+    for horario in horarios:
+        dia = horario.get_dia_semana_display()
+        if dia not in horarios_por_dia:
+            horarios_por_dia[dia] = []
+        horarios_por_dia[dia].append({
+            'jornada': horario.get_jornada_display(),
+            'sede': horario.get_sede_display()
+        })
+
+    # Respuesta
+    response_data = {
+        'monitor': {
+            'id': monitor.id,
+            'username': monitor.username,
+            'nombre': monitor.nombre
+        },
+        'periodo_actual': {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d'),
+            'dias_trabajados': (fecha_fin - fecha_inicio).days + 1
+        },
+        'horarios_semanales': {
+            'horas_por_semana': proyeccion['horas_semanales'],
+            'jornadas_por_semana': proyeccion['horas_semanales'] // 4,
+            'detalle_por_dia': horarios_por_dia
+        },
+        'finanzas_actuales': {
+            'horas_trabajadas': calculo_horas['horas_totales'],
+            'horas_asistencias': calculo_horas['horas_asistencias'],
+            'horas_ajustes': calculo_horas['horas_ajustes'],
+            'costo_total': costo_actual,
+            'costo_por_hora': obtener_costo_por_hora()
+        },
+        'proyeccion_semestre': {
+            'semanas_trabajadas': proyeccion['semanas_trabajadas'],
+            'semanas_faltantes': proyeccion['semanas_faltantes'],
+            'horas_totales_proyectadas': proyeccion['horas_totales_proyectadas'],
+            'horas_trabajadas_proyectadas': proyeccion['horas_trabajadas_proyectadas'],
+            'costo_total_proyectado': proyeccion['costo_total_proyectado'],
+            'costo_trabajado_proyectado': proyeccion['costo_trabajado_proyectado'],
+            'porcentaje_completado': round((proyeccion['semanas_trabajadas'] / obtener_semanas_semestre()) * 100, 2)
+        },
+        'estadisticas': {
+            'total_asistencias': calculo_horas['total_asistencias'],
+            'total_ajustes': calculo_horas['total_ajustes'],
+            'promedio_horas_por_dia': round(calculo_horas['horas_totales'] / max(1, (fecha_fin - fecha_inicio).days + 1), 2)
+        }
+    }
+
+    return Response(response_data)
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_finanzas_todos_monitores(request):
+    """
+    Reporte financiero consolidado de todos los monitores.
+    Incluye costos totales, proyecciones, comparativas, etc.
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Parámetros de filtrado
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    semanas_trabajadas = request.query_params.get('semanas_trabajadas', 8)  # Por defecto 8 semanas
+
+    # Fechas por defecto: último mes
+    if not fecha_inicio_str:
+        from datetime import date, timedelta
+        fecha_inicio = date.today() - timedelta(days=30)
+    else:
+        fecha_inicio = _parse_fecha(fecha_inicio_str)
+    
+    if not fecha_fin_str:
+        fecha_fin = date.today()
+    else:
+        fecha_fin = _parse_fecha(fecha_fin_str)
+
+    # Validar semanas_trabajadas
+    try:
+        semanas_trabajadas = int(semanas_trabajadas)
+        max_semanas = obtener_semanas_semestre()
+        if semanas_trabajadas < 0 or semanas_trabajadas > max_semanas:
+            return Response({'detail': f'semanas_trabajadas debe estar entre 0 y {max_semanas}'}, status=status.HTTP_400_BAD_REQUEST)
+    except ValueError:
+        return Response({'detail': 'semanas_trabajadas debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener todos los monitores
+    monitores = UsuarioPersonalizado.objects.filter(tipo_usuario='MONITOR')
+    
+    # Calcular datos para cada monitor
+    monitores_data = []
+    total_costo_actual = 0.0
+    total_costo_proyectado = 0.0
+    total_horas_actuales = 0.0
+    total_horas_proyectadas = 0.0
+    
+    for monitor in monitores:
+        # Calcular horas y costos
+        calculo_horas = calcular_horas_totales_monitor(monitor.id, fecha_inicio, fecha_fin)
+        costo_actual = calcular_costo_total_monitor(monitor.id, fecha_inicio, fecha_fin)
+        proyeccion = calcular_costo_proyectado_monitor(monitor.id, semanas_trabajadas)
+        
+        # Solo incluir monitores que tienen horarios asignados
+        if proyeccion['horas_semanales'] > 0:
+            monitor_data = {
+                'monitor': {
+                    'id': monitor.id,
+                    'username': monitor.username,
+                    'nombre': monitor.nombre
+                },
+                'horarios_semanales': {
+                    'horas_por_semana': proyeccion['horas_semanales'],
+                    'jornadas_por_semana': proyeccion['horas_semanales'] // 4
+                },
+                'finanzas_actuales': {
+                    'horas_trabajadas': calculo_horas['horas_totales'],
+                    'costo_total': costo_actual
+                },
+                'proyeccion_semestre': {
+                    'semanas_trabajadas': proyeccion['semanas_trabajadas'],
+                    'semanas_faltantes': proyeccion['semanas_faltantes'],
+                    'costo_total_proyectado': proyeccion['costo_total_proyectado'],
+                    'costo_trabajado_proyectado': proyeccion['costo_trabajado_proyectado'],
+                    'porcentaje_completado': round((proyeccion['semanas_trabajadas'] / obtener_semanas_semestre()) * 100, 2)
+                },
+                'estadisticas': {
+                    'total_asistencias': calculo_horas['total_asistencias'],
+                    'total_ajustes': calculo_horas['total_ajustes']
+                }
+            }
+            
+            monitores_data.append(monitor_data)
+            
+            # Acumular totales
+            total_costo_actual += costo_actual
+            total_costo_proyectado += proyeccion['costo_total_proyectado']
+            total_horas_actuales += calculo_horas['horas_totales']
+            total_horas_proyectadas += proyeccion['horas_totales_proyectadas']
+
+    # Ordenar monitores por costo actual (descendente)
+    monitores_data.sort(key=lambda x: x['finanzas_actuales']['costo_total'], reverse=True)
+
+    # Calcular estadísticas generales
+    total_monitores = len(monitores_data)
+    costo_promedio_por_monitor = total_costo_actual / max(1, total_monitores)
+    horas_promedio_por_monitor = total_horas_actuales / max(1, total_monitores)
+
+    # Respuesta
+    response_data = {
+        'periodo_actual': {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d'),
+            'dias_trabajados': (fecha_fin - fecha_inicio).days + 1
+        },
+        'semanas_trabajadas': semanas_trabajadas,
+        'estadisticas_generales': {
+            'total_monitores': total_monitores,
+            'costo_total_actual': round(total_costo_actual, 2),
+            'costo_total_proyectado': round(total_costo_proyectado, 2),
+            'costo_promedio_por_monitor': round(costo_promedio_por_monitor, 2),
+            'horas_totales_actuales': round(total_horas_actuales, 2),
+            'horas_totales_proyectadas': round(total_horas_proyectadas, 2),
+            'horas_promedio_por_monitor': round(horas_promedio_por_monitor, 2),
+            'costo_por_hora': obtener_costo_por_hora()
+        },
+        'resumen_financiero': {
+            'diferencia_proyeccion_vs_actual': round(total_costo_proyectado - total_costo_actual, 2),
+            'porcentaje_ejecutado': round((total_costo_actual / max(1, total_costo_proyectado)) * 100, 2),
+            'costo_semanal_promedio': round(total_costo_actual / max(1, (fecha_fin - fecha_inicio).days + 1) * 7, 2)
+        },
+        'monitores': monitores_data
+    }
+
+    return Response(response_data)
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_finanzas_resumen_ejecutivo(request):
+    """
+    Resumen ejecutivo financiero del sistema.
+    Dashboard con métricas clave, tendencias y alertas.
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Parámetros de filtrado
+    fecha_inicio_str = request.query_params.get('fecha_inicio')
+    fecha_fin_str = request.query_params.get('fecha_fin')
+    semanas_trabajadas = request.query_params.get('semanas_trabajadas', 8)
+
+    # Fechas por defecto: último mes
+    if not fecha_inicio_str:
+        from datetime import date, timedelta
+        fecha_inicio = date.today() - timedelta(days=30)
+    else:
+        fecha_inicio = _parse_fecha(fecha_inicio_str)
+    
+    if not fecha_fin_str:
+        fecha_fin = date.today()
+    else:
+        fecha_fin = _parse_fecha(fecha_fin_str)
+
+    # Validar semanas_trabajadas
+    try:
+        semanas_trabajadas = int(semanas_trabajadas)
+        max_semanas = obtener_semanas_semestre()
+        if semanas_trabajadas < 0 or semanas_trabajadas > max_semanas:
+            return Response({'detail': f'semanas_trabajadas debe estar entre 0 y {max_semanas}'}, status=status.HTTP_400_BAD_REQUEST)
+    except ValueError:
+        return Response({'detail': 'semanas_trabajadas debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener todos los monitores
+    monitores = UsuarioPersonalizado.objects.filter(tipo_usuario='MONITOR')
+    
+    # Calcular métricas generales
+    total_costo_actual = 0.0
+    total_costo_proyectado = 0.0
+    total_horas_actuales = 0.0
+    total_horas_proyectadas = 0.0
+    monitores_activos = 0
+    monitores_con_horarios = 0
+    
+    # Top monitores por costo
+    monitores_costo = []
+    
+    for monitor in monitores:
+        calculo_horas = calcular_horas_totales_monitor(monitor.id, fecha_inicio, fecha_fin)
+        costo_actual = calcular_costo_total_monitor(monitor.id, fecha_inicio, fecha_fin)
+        proyeccion = calcular_costo_proyectado_monitor(monitor.id, semanas_trabajadas)
+        
+        # Contar monitores con horarios
+        if proyeccion['horas_semanales'] > 0:
+            monitores_con_horarios += 1
+            
+            # Contar monitores activos (con horas trabajadas)
+            if calculo_horas['horas_totales'] > 0:
+                monitores_activos += 1
+            
+            # Acumular totales
+            total_costo_actual += costo_actual
+            total_costo_proyectado += proyeccion['costo_total_proyectado']
+            total_horas_actuales += calculo_horas['horas_totales']
+            total_horas_proyectadas += proyeccion['horas_totales_proyectadas']
+            
+            # Para top monitores
+            monitores_costo.append({
+                'monitor': {
+                    'id': monitor.id,
+                    'nombre': monitor.nombre,
+                    'username': monitor.username
+                },
+                'costo_actual': costo_actual,
+                'horas_trabajadas': calculo_horas['horas_totales']
+            })
+
+    # Ordenar por costo y tomar top 5
+    monitores_costo.sort(key=lambda x: x['costo_actual'], reverse=True)
+    top_monitores = monitores_costo[:5]
+
+    # Calcular alertas y tendencias
+    porcentaje_ejecutado = (total_costo_actual / max(1, total_costo_proyectado)) * 100
+    costo_semanal_promedio = total_costo_actual / max(1, (fecha_fin - fecha_inicio).days + 1) * 7
+    
+    alertas = []
+    if porcentaje_ejecutado > 80:
+        alertas.append({
+            'tipo': 'warning',
+            'mensaje': f'Se ha ejecutado el {porcentaje_ejecutado:.1f}% del presupuesto proyectado'
+        })
+    
+    if monitores_activos < monitores_con_horarios * 0.5:
+        alertas.append({
+            'tipo': 'info',
+            'mensaje': f'Solo {monitores_activos} de {monitores_con_horarios} monitores han trabajado en el período'
+        })
+
+    # Respuesta
+    response_data = {
+        'periodo': {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d'),
+            'semanas_trabajadas': semanas_trabajadas
+        },
+        'metricas_principales': {
+            'total_monitores': monitores_con_horarios,
+            'monitores_activos': monitores_activos,
+            'porcentaje_actividad': round((monitores_activos / max(1, monitores_con_horarios)) * 100, 2),
+            'costo_total_actual': round(total_costo_actual, 2),
+            'costo_total_proyectado': round(total_costo_proyectado, 2),
+            'horas_totales_actuales': round(total_horas_actuales, 2),
+            'horas_totales_proyectadas': round(total_horas_proyectadas, 2)
+        },
+        'indicadores_financieros': {
+            'costo_por_hora': obtener_costo_por_hora(),
+            'costo_promedio_por_monitor': round(total_costo_actual / max(1, monitores_con_horarios), 2),
+            'costo_semanal_promedio': round(costo_semanal_promedio, 2),
+            'porcentaje_ejecutado': round(porcentaje_ejecutado, 2),
+            'diferencia_presupuesto': round(total_costo_proyectado - total_costo_actual, 2)
+        },
+        'top_monitores': {
+            'por_costo': top_monitores,
+            'total_considerados': len(monitores_costo)
+        },
+        'alertas': alertas,
+        'resumen_semanal': {
+            'costo_semanal_total': round(costo_semanal_promedio * monitores_con_horarios, 2),
+            'horas_semanal_promedio': round(total_horas_actuales / max(1, (fecha_fin - fecha_inicio).days + 1) * 7, 2),
+            'proyeccion_fin_semestre': round(total_costo_proyectado - total_costo_actual, 2)
+        }
+    }
+
+    return Response(response_data)
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_finanzas_comparativa_semanas(request):
+    """
+    Comparativa financiera por semanas del semestre.
+    Muestra evolución de costos y horas por semana.
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Obtener todos los monitores
+    monitores = UsuarioPersonalizado.objects.filter(tipo_usuario='MONITOR')
+    
+    # Calcular datos por semana (simulado para las primeras 16 semanas)
+    semanas_data = []
+    total_semanas = obtener_semanas_semestre()
+    
+    for semana in range(1, total_semanas + 1):
+        semana_costo_total = 0.0
+        semana_horas_total = 0.0
+        monitores_semana = 0
+        
+        for monitor in monitores:
+            # Simular datos por semana (en un caso real, esto vendría de datos históricos)
+            proyeccion = calcular_costo_proyectado_monitor(monitor.id, semana)
+            
+            if proyeccion['horas_semanales'] > 0:
+                semana_costo_total += proyeccion['costo_trabajado_proyectado']
+                semana_horas_total += proyeccion['horas_trabajadas_proyectadas']
+                monitores_semana += 1
+        
+        semanas_data.append({
+            'semana': semana,
+            'costo_total': round(semana_costo_total, 2),
+            'horas_total': round(semana_horas_total, 2),
+            'monitores_activos': monitores_semana,
+            'costo_promedio_por_monitor': round(semana_costo_total / max(1, monitores_semana), 2),
+            'estado': 'completada' if semana <= 8 else 'pendiente'
+        })
+    
+    # Calcular totales acumulados
+    costo_acumulado = 0.0
+    horas_acumuladas = 0.0
+    
+    for semana_data in semanas_data:
+        costo_acumulado += semana_data['costo_total']
+        horas_acumuladas += semana_data['horas_total']
+        semana_data['costo_acumulado'] = round(costo_acumulado, 2)
+        semana_data['horas_acumuladas'] = round(horas_acumuladas, 2)
+    
+    # Calcular porcentajes después de tener todos los totales acumulados
+    costo_total_final = semanas_data[-1]['costo_acumulado'] if semanas_data else 0
+    for semana_data in semanas_data:
+        semana_data['porcentaje_completado'] = round((semana_data['costo_acumulado'] / max(1, costo_total_final)) * 100, 2)
+
+    # Respuesta
+    response_data = {
+        'total_semanas': total_semanas,
+        'semanas_trabajadas': 8,  # Por defecto
+        'semanas_pendientes': total_semanas - 8,
+        'resumen_general': {
+            'costo_total_semestre': round(semanas_data[-1]['costo_acumulado'], 2),
+            'horas_total_semestre': round(semanas_data[-1]['horas_acumuladas'], 2),
+            'costo_promedio_por_semana': round(semanas_data[-1]['costo_acumulado'] / total_semanas, 2),
+            'horas_promedio_por_semana': round(semanas_data[-1]['horas_acumuladas'] / total_semanas, 2)
+        },
+        'semanas': semanas_data,
+        'tendencias': {
+            'costo_por_semana': [s['costo_total'] for s in semanas_data],
+            'horas_por_semana': [s['horas_total'] for s in semanas_data],
+            'costo_acumulado': [s['costo_acumulado'] for s in semanas_data]
+        }
+    }
+
+    return Response(response_data)
+
+
+# ===== Endpoints para CONFIGURACIONES DEL SISTEMA =====
 
 @api_view(['GET'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def directivo_configuraciones(request):
     """
-    HU9: Administración de configuraciones del sistema
     Listar todas las configuraciones del sistema.
     Acceso: solo DIRECTIVO
     """
@@ -910,7 +1923,6 @@ def directivo_configuraciones(request):
 @permission_classes([AllowAny])
 def directivo_configuraciones_crear(request):
     """
-    HU9: Administración de configuraciones del sistema
     Crear nueva configuración del sistema.
     Acceso: solo DIRECTIVO
     """
@@ -944,7 +1956,6 @@ def directivo_configuraciones_crear(request):
 @permission_classes([AllowAny])
 def directivo_configuraciones_detalle(request, clave):
     """
-    HU9: Administración de configuraciones del sistema
     GET: Obtener configuración específica
     PUT: Actualizar configuración
     DELETE: Eliminar configuración
@@ -985,7 +1996,6 @@ def directivo_configuraciones_detalle(request, clave):
 @permission_classes([AllowAny])
 def directivo_configuraciones_detalle_por_id(request, id):
     """
-    HU9: Administración de configuraciones del sistema
     GET: Obtener configuración específica por ID
     PUT: Actualizar configuración por ID
     DELETE: Eliminar configuración por ID
@@ -1021,12 +2031,187 @@ def directivo_configuraciones_detalle_por_id(request, id):
         configuracion.delete()
         return Response({'detail': 'Configuración eliminada exitosamente'}, status=status.HTTP_204_NO_CONTENT)
 
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def directivo_total_horas_horarios(request):
+    """
+    Calcular el total de horas basado en los horarios fijos de los monitores * total de semanas.
+    Filtros opcionales: monitor_id, sede, jornada
+    Acceso: solo DIRECTIVO
+    """
+    # Autenticación manual
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return Response({'detail': 'Token de autenticación requerido'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Usuario DIRECTIVO temporal
+    usuario_directivo = UsuarioPersonalizado.objects.filter(tipo_usuario='DIRECTIVO').first()
+    if not usuario_directivo:
+        return Response({'detail': 'No hay usuarios DIRECTIVO'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Parámetros de filtrado
+    monitor_id = request.query_params.get('monitor_id')
+    sede = request.query_params.get('sede')  # SA|BA
+    jornada = request.query_params.get('jornada')  # M|T
+
+    # Validar filtros
+    if sede and sede not in ['SA', 'BA']:
+        return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+    if jornada and jornada not in ['M', 'T']:
+        return Response({'detail': 'jornada debe ser M o T'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener configuración de semanas del semestre
+    total_semanas = obtener_semanas_semestre()
+    costo_por_hora = obtener_costo_por_hora()
+
+    # Query base para horarios fijos
+    horarios_qs = HorarioFijo.objects.filter(usuario__tipo_usuario='MONITOR')
+    
+    # Aplicar filtros
+    if monitor_id:
+        try:
+            monitor_id = int(monitor_id)
+            horarios_qs = horarios_qs.filter(usuario__id=monitor_id)
+        except ValueError:
+            return Response({'detail': 'monitor_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if sede:
+        horarios_qs = horarios_qs.filter(sede=sede)
+    if jornada:
+        horarios_qs = horarios_qs.filter(jornada=jornada)
+
+    # Calcular estadísticas por monitor
+    monitores_data = {}
+    total_horarios = 0
+    total_horas_semanales = 0
+    total_horas_semestre = 0
+    total_costo_semestre = 0
+
+    # Agrupar horarios por monitor
+    for horario in horarios_qs.select_related('usuario'):
+        monitor = horario.usuario
+        monitor_id = monitor.id
+        
+        if monitor_id not in monitores_data:
+            monitores_data[monitor_id] = {
+                'monitor': {
+                    'id': monitor.id,
+                    'username': monitor.username,
+                    'nombre': monitor.nombre
+                },
+                'horarios': [],
+                'horas_semanales': 0,
+                'horas_semestre': 0,
+                'costo_semestre': 0,
+                'total_jornadas_semana': 0
+            }
+        
+        # Agregar horario al monitor
+        horario_data = {
+            'id': horario.id,
+            'dia_semana': horario.dia_semana,
+            'dia_semana_display': horario.get_dia_semana_display(),
+            'jornada': horario.jornada,
+            'jornada_display': horario.get_jornada_display(),
+            'sede': horario.sede,
+            'sede_display': horario.get_sede_display()
+        }
+        monitores_data[monitor_id]['horarios'].append(horario_data)
+        monitores_data[monitor_id]['total_jornadas_semana'] += 1
+
+    # Calcular horas y costos para cada monitor
+    for monitor_id, data in monitores_data.items():
+        # Cada jornada = 4 horas
+        horas_semanales = data['total_jornadas_semana'] * 4
+        horas_semestre = horas_semanales * total_semanas
+        costo_semestre = horas_semestre * costo_por_hora
+        
+        data['horas_semanales'] = horas_semanales
+        data['horas_semestre'] = horas_semestre
+        data['costo_semestre'] = round(costo_semestre, 2)
+        
+        # Acumular totales
+        total_horarios += data['total_jornadas_semana']
+        total_horas_semanales += horas_semanales
+        total_horas_semestre += horas_semestre
+        total_costo_semestre += costo_semestre
+
+    # Ordenar monitores por horas semanales (descendente)
+    monitores_ordenados = sorted(
+        monitores_data.values(),
+        key=lambda x: x['horas_semanales'],
+        reverse=True
+    )
+
+    # Calcular estadísticas generales
+    total_monitores = len(monitores_data)
+    promedio_horas_semana = total_horas_semanales / max(1, total_monitores)
+    promedio_costo_semestre = total_costo_semestre / max(1, total_monitores)
+
+    # Respuesta
+    response_data = {
+        'configuracion': {
+            'total_semanas_semestre': total_semanas,
+            'costo_por_hora': costo_por_hora,
+            'horas_por_jornada': 4
+        },
+        'estadisticas_generales': {
+            'total_monitores': total_monitores,
+            'total_horarios': total_horarios,
+            'total_horas_semanales': total_horas_semanales,
+            'total_horas_semestre': total_horas_semestre,
+            'total_costo_semestre': round(total_costo_semestre, 2),
+            'promedio_horas_semana_por_monitor': round(promedio_horas_semana, 2),
+            'promedio_costo_semestre_por_monitor': round(promedio_costo_semestre, 2)
+        },
+        'filtros_aplicados': {
+            'monitor_id': monitor_id,
+            'sede': sede,
+            'jornada': jornada
+        },
+        'monitores': monitores_ordenados,
+        'resumen_por_sede': _calcular_resumen_por_sede(monitores_data),
+        'resumen_por_jornada': _calcular_resumen_por_jornada(monitores_data)
+    }
+
+    return Response(response_data)
+
+def _calcular_resumen_por_sede(monitores_data):
+    """Calcular resumen de horas por sede"""
+    resumen = {'SA': {'monitores': 0, 'horas_semana': 0, 'horas_semestre': 0}, 
+               'BA': {'monitores': 0, 'horas_semana': 0, 'horas_semestre': 0}}
+    
+    for data in monitores_data.values():
+        for horario in data['horarios']:
+            sede = horario['sede']
+            if sede in resumen:
+                resumen[sede]['monitores'] += 1
+                resumen[sede]['horas_semana'] += 4  # 4 horas por jornada
+                resumen[sede]['horas_semestre'] += 4 * 14  # 14 semanas por defecto
+    
+    return resumen
+
+def _calcular_resumen_por_jornada(monitores_data):
+    """Calcular resumen de horas por jornada"""
+    resumen = {'M': {'monitores': 0, 'horas_semana': 0, 'horas_semestre': 0}, 
+               'T': {'monitores': 0, 'horas_semana': 0, 'horas_semestre': 0}}
+    
+    for data in monitores_data.values():
+        for horario in data['horarios']:
+            jornada = horario['jornada']
+            if jornada in resumen:
+                resumen[jornada]['monitores'] += 1
+                resumen[jornada]['horas_semana'] += 4  # 4 horas por jornada
+                resumen[jornada]['horas_semestre'] += 4 * 14  # 14 semanas por defecto
+    
+    return resumen
+
 @api_view(['POST'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def directivo_configuraciones_inicializar(request):
     """
-    HU9: Administración de configuraciones del sistema
     Inicializar configuraciones por defecto del sistema.
     Acceso: solo DIRECTIVO
     """
@@ -1079,69 +2264,3 @@ def directivo_configuraciones_inicializar(request):
         'configuraciones_existentes': configuraciones_existentes,
         'total_procesadas': len(configuraciones_por_defecto)
     }, status=status.HTTP_201_CREATED)
-
-# ===== DIRECTIVO AUTORIZACIÓN =====
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def autorizar_monitor(request):
-    """
-    Endpoint para que el directivo autorice a un monitor para marcar asistencia.
-    """
-    usuario = request.user
-
-    # Verificar si el usuario es un directivo
-    if usuario.tipo_usuario != 'directivo':
-        return Response(
-            {'error': 'No tiene permisos para realizar esta acción.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
-
-    monitor_id = request.data.get('monitor_id')
-
-    # Verificar si el monitor existe
-    try:
-        monitor = UsuarioPersonalizado.objects.get(id=monitor_id, tipo_usuario='monitor')
-    except UsuarioPersonalizado.DoesNotExist:
-        return Response(
-            {'error': 'Monitor no encontrado.'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-    # Autorizar al monitor
-    monitor.autorizado = True
-    monitor.save()
-
-    return Response(
-        {'message': f'El monitor {monitor.username} ha sido autorizado para marcar asistencia.'},
-        status=status.HTTP_200_OK
-    )
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def marcar_asistencia(request):
-    """
-    Endpoint para que los monitores marquen su asistencia.
-    """
-    usuario = request.user
-
-    # Verificar si el usuario es un monitor autorizado
-    if usuario.tipo_usuario != 'monitor' or not usuario.autorizado:
-        return Response(
-            {'error': 'No tiene permisos para realizar esta acción o no está autorizado.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
-
-    # Registrar la asistencia
-    asistencia = {
-        'monitor_id': usuario.id,
-        'fecha': date.today(),
-        'horas': request.data.get('horas', 0)
-    }
-
-    # Aquí se puede agregar lógica para guardar la asistencia en la base de datos
-
-    return Response(
-        {'message': f'Asistencia registrada para el monitor {usuario.username}.'},
-        status=status.HTTP_200_OK
-    )

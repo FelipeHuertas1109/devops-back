@@ -2,47 +2,53 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # ===== AUTENTICACIÓN (HU1, HU2) =====
+    # Autenticación
     path('login/', views.login_usuario, name='login_usuario'),
     path('registro/', views.registro_usuario, name='registro_usuario'),
     path('usuario/actual/', views.obtener_usuario_actual, name='obtener_usuario_actual'),
     
-    # ===== HORARIOS FIJOS (HU3) =====
+    # Horarios Fijos
     path('horarios/', views.horarios_fijos, name='horarios_fijos'),
     path('horarios/multiple/', views.horarios_fijos_multiple, name='horarios_fijos_multiple'),
     path('horarios/edit-multiple/', views.horarios_fijos_edit_multiple, name='horarios_fijos_edit_multiple'),
     path('horarios/<int:pk>/', views.horario_fijo_detalle, name='horario_fijo_detalle'),
     
-    # ===== DIRECTIVO - CONSULTA DE HORARIOS (HU3) =====
-    path('directivo/horarios/', views.directivo_horarios_monitores, name='directivo_horarios_monitores'),
-    
-    # ===== ASISTENCIAS (HU5) =====
+    # Asistencias
     path('asistencias/', views.asistencias, name='asistencias'),
     path('asistencias/<int:pk>/', views.asistencia_detalle, name='asistencia_detalle'),
+
+    # Directivo
+    path('directivo/horarios/', views.directivo_horarios_monitores, name='directivo_horarios_monitores'),
     path('directivo/asistencias/', views.directivo_asistencias, name='directivo_asistencias'),
-    path('directivo/asistencias/<int:pk>/autorizar/', views.directivo_asistencia_autorizar, name='directivo_asistencia_autorizar'),
+    path('directivo/asistencias/<int:pk>/autorizar/', views.directivo_autorizar_asistencia, name='directivo_autorizar_asistencia'),
+    path('directivo/asistencias/<int:pk>/rechazar/', views.directivo_rechazar_asistencia, name='directivo_rechazar_asistencia'),
     
-    # ===== ALIAS PARA SCHEDULES (HU3) =====
-    path('schedules/', views.horarios_fijos, name='schedules'),
-    path('schedules/multiple/', views.horarios_fijos_multiple, name='schedules_multiple'),
-    path('schedules/edit-multiple/', views.horarios_fijos_edit_multiple, name='schedules_edit_multiple'),
-    path('schedules/<int:pk>/', views.horario_fijo_detalle, name='schedule_detalle'),
-    path('directivo/schedules/', views.directivo_horarios_monitores, name='directivo_schedules'),
+    # Reportes
+    path('directivo/reportes/horas-monitor/<int:monitor_id>/', views.directivo_reporte_horas_monitor, name='directivo_reporte_horas_monitor'),
+    path('directivo/reportes/horas-todos/', views.directivo_reporte_horas_todos, name='directivo_reporte_horas_todos'),
+
+    # Monitor
+    path('monitor/mis-asistencias/', views.monitor_mis_asistencias, name='monitor_mis_asistencias'),
+    path('monitor/marcar/', views.monitor_marcar, name='monitor_marcar'),
     
-    # ===== AJUSTES MANUALES DE HORAS (HU7A) =====
+    # Ajustes de Horas
     path('directivo/ajustes-horas/', views.directivo_ajustes_horas, name='directivo_ajustes_horas'),
     path('directivo/ajustes-horas/<int:pk>/', views.directivo_ajuste_horas_detalle, name='directivo_ajuste_horas_detalle'),
     
-    # ===== CONFIGURACIONES DEL SISTEMA (HU9) =====
+    # Búsqueda de Monitores
+    path('directivo/buscar-monitores/', views.directivo_buscar_monitores, name='directivo_buscar_monitores'),
+    
+    # Finanzas
+    path('directivo/finanzas/monitor/<int:monitor_id>/', views.directivo_finanzas_monitor_individual, name='directivo_finanzas_monitor_individual'),
+    path('directivo/finanzas/todos-monitores/', views.directivo_finanzas_todos_monitores, name='directivo_finanzas_todos_monitores'),
+    path('directivo/finanzas/resumen-ejecutivo/', views.directivo_finanzas_resumen_ejecutivo, name='directivo_finanzas_resumen_ejecutivo'),
+    path('directivo/finanzas/comparativa-semanas/', views.directivo_finanzas_comparativa_semanas, name='directivo_finanzas_comparativa_semanas'),
+    path('directivo/total-horas-horarios/', views.directivo_total_horas_horarios, name='directivo_total_horas_horarios'),
+    
+    # Configuraciones del Sistema
     path('directivo/configuraciones/', views.directivo_configuraciones, name='directivo_configuraciones'),
     path('directivo/configuraciones/crear/', views.directivo_configuraciones_crear, name='directivo_configuraciones_crear'),
     path('directivo/configuraciones/inicializar/', views.directivo_configuraciones_inicializar, name='directivo_configuraciones_inicializar'),
     path('directivo/configuraciones/<str:clave>/', views.directivo_configuraciones_detalle, name='directivo_configuraciones_detalle'),
     path('directivo/configuraciones/<int:id>/', views.directivo_configuraciones_detalle_por_id, name='directivo_configuraciones_detalle_por_id'),
-    
-    # ===== DIRECTIVO AUTORIZACIÓN =====
-    path('directivo/autorizar-monitor/', views.autorizar_monitor, name='autorizar_monitor'),
-    
-    # ===== MONITOR ASISTENCIA =====
-    path('monitor/marcar-asistencia/', views.marcar_asistencia, name='marcar_asistencia'),
 ]

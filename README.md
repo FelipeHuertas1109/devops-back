@@ -1,324 +1,106 @@
-# Sistema de Monitoreo de Asistencias - Backend (Laboratorio I)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fexamples%2Ftree%2Fmain%2Fpython%2Fdjango&demo-title=Django%20%2B%20Vercel&demo-description=Use%20Django%204%20on%20Vercel%20with%20Serverless%20Functions%20using%20the%20Python%20Runtime.&demo-url=https%3A%2F%2Fdjango-template.vercel.app%2F&demo-image=https://assets.vercel.com/image/upload/v1669994241/random/django.png)
 
-Backend del Sistema de Monitoreo orientado a gestionar el ciclo completo de asistencia de monitores académicos bajo la supervisión de directivos.
+# Django + Vercel
 
-## 🎯 Alcance Actual: Laboratorio I
+This example shows how to use Django 4 on Vercel with Serverless Functions using the [Python Runtime](https://vercel.com/docs/concepts/functions/serverless-functions/runtimes/python).
 
-El proyecto actualmente implementa las funcionalidades base del sistema:
+## Demo
 
-### ✅ Implementado
+https://django-template.vercel.app/
 
-- **HU1**: Registro de monitores con token automático
-- **HU2**: Login y autenticación JWT
-- **HU3**: Gestión de horarios (individual y masiva)
-- **HU7A**: Ajustes manuales de horas
-- **HU9**: Administración de configuraciones del sistema
+## How it Works
 
-### ⏳ Pendiente (Futuros Laboratorios)
+Our Django application, `example` is configured as an installed application in `api/settings.py`:
 
-- **HU4, HU5**: Gestión de asistencias (marcaje, autorización)
-- **HU6**: Reportes de horas (individual y consolidado)
-- **HU7B, HU8**: Paneles financieros y comparativas
-
-📄 Ver [`ALCANCE_LABORATORIO_I.md`](ALCANCE_LABORATORIO_I.md) para detalles completos del alcance.
-
----
-
-## 🛠️ Stack Tecnológico
-
-- **Framework**: Django 4.x + Django REST Framework
-- **Base de Datos**: PostgreSQL
-- **Autenticación**: JWT (djangorestframework-simplejwt)
-- **Despliegue**: Vercel con Serverless Functions
-
----
-
-## 📦 Instalación y Configuración
-
-### Requisitos Previos
-
-- Python 3.9+
-- PostgreSQL
-- pip
-
-### 1. Clonar el Repositorio
-
-```bash
-git clone <repository-url>
-cd devops-back
+```python
+# api/settings.py
+INSTALLED_APPS = [
+    # ...
+    'example',
+]
 ```
 
-### 2. Instalar Dependencias
+We allow "\*.vercel.app" subdomains in `ALLOWED_HOSTS`, in addition to 127.0.0.1:
 
-```bash
-pip install -r requirements.txt
+```python
+# api/settings.py
+ALLOWED_HOSTS = ['127.0.0.1', '.vercel.app']
 ```
 
-### 3. Configurar Variables de Entorno
+The `wsgi` module must use a public variable named `app` to expose the WSGI application:
 
-Crear archivo `.env` en la raíz del proyecto:
-
-```env
-# Base de datos
-DB_NAME=nombre_base_datos
-DB_USER=usuario
-DB_PASSWORD=contraseña
-DB_HOST=localhost
-DB_PORT=5432
-
-# Django
-SECRET_KEY=tu-secret-key-aqui
-DEBUG=True
+```python
+# api/wsgi.py
+app = get_wsgi_application()
 ```
 
-### 4. Aplicar Migraciones
+The corresponding `WSGI_APPLICATION` setting is configured to use the `app` variable from the `api.wsgi` module:
 
-```bash
-python manage.py migrate
+```python
+# api/settings.py
+WSGI_APPLICATION = 'api.wsgi.app'
 ```
 
-### 5. Crear Usuario Directivo (Opcional)
+There is a single view which renders the current time in `example/views.py`:
 
-```bash
-python crear_usuario.py
+```python
+# example/views.py
+from datetime import datetime
+
+from django.http import HttpResponse
+
+
+def index(request):
+    now = datetime.now()
+    html = f'''
+    <html>
+        <body>
+            <h1>Hello from Vercel!</h1>
+            <p>The current time is { now }.</p>
+        </body>
+    </html>
+    '''
+    return HttpResponse(html)
 ```
 
-### 6. Ejecutar el Servidor de Desarrollo
+This view is exposed a URL through `example/urls.py`:
+
+```python
+# example/urls.py
+from django.urls import path
+
+from example.views import index
+
+
+urlpatterns = [
+    path('', index),
+]
+```
+
+Finally, it's made accessible to the Django server inside `api/urls.py`:
+
+```python
+# api/urls.py
+from django.urls import path, include
+
+urlpatterns = [
+    ...
+    path('', include('example.urls')),
+]
+```
+
+This example uses the Web Server Gateway Interface (WSGI) with Django to enable handling requests on Vercel with Serverless Functions.
+
+## Running Locally
 
 ```bash
 python manage.py runserver
 ```
 
-El servidor estará disponible en `http://localhost:8000`
+Your Django application is now available at `http://localhost:8000`.
 
----
+## One-Click Deploy
 
-## 🚀 Uso del API
+Deploy the example using [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=vercel-examples):
 
-### Autenticación
-
-#### Registro de Monitor
-```bash
-POST /example/registro/
-Content-Type: application/json
-
-{
-  "username": "monitor1",
-  "nombre": "Juan Pérez",
-  "password": "password123",
-  "confirm_password": "password123"
-}
-```
-
-#### Login
-```bash
-POST /example/login/
-Content-Type: application/json
-
-{
-  "nombre_de_usuario": "monitor1",
-  "password": "password123"
-}
-```
-
-### Horarios
-
-#### Crear Horario Individual
-```bash
-POST /example/horarios/
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "dia_semana": 0,
-  "jornada": "M",
-  "sede": "SA"
-}
-```
-
-#### Crear Múltiples Horarios
-```bash
-POST /example/horarios/multiple/
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "horarios": [
-    {"dia_semana": 0, "jornada": "M", "sede": "SA"},
-    {"dia_semana": 2, "jornada": "T", "sede": "BA"}
-  ]
-}
-```
-
-### Ajustes de Horas (Directivo)
-
-```bash
-POST /example/directivo/ajustes-horas/
-Authorization: Bearer <token_directivo>
-Content-Type: application/json
-
-{
-  "monitor_id": 1,
-  "fecha": "2025-10-22",
-  "cantidad_horas": 2.5,
-  "motivo": "Horas extra por evento especial"
-}
-```
-
-### Configuraciones (Directivo)
-
-```bash
-# Inicializar configuraciones por defecto
-POST /example/directivo/configuraciones/inicializar/
-Authorization: Bearer <token_directivo>
-
-# Listar configuraciones
-GET /example/directivo/configuraciones/
-Authorization: Bearer <token_directivo>
-```
-
----
-
-## 📚 Documentación
-
-- [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md) - Documentación completa de endpoints
-- [`ALCANCE_LABORATORIO_I.md`](ALCANCE_LABORATORIO_I.md) - Alcance detallado del Laboratorio I
-- [`FRONTEND_CONFIG.md`](FRONTEND_CONFIG.md) - Configuración para integración frontend
-- [`GUIA_FINANZAS.md`](GUIA_FINANZAS.md) - Guía de módulos financieros (futuros)
-
----
-
-## 🗃️ Estructura del Proyecto
-
-```
-devops-back/
-├── api/                    # Configuración de Django
-│   ├── settings.py
-│   ├── urls.py
-│   └── wsgi.py
-├── example/                # Aplicación principal
-│   ├── models.py          # Modelos: Usuario, Horario, Ajuste, Config
-│   ├── views.py           # Vistas del API
-│   ├── serializers.py     # Serializers de DRF
-│   ├── urls.py            # URLs de la aplicación
-│   └── migrations/        # Migraciones de base de datos
-├── requirements.txt       # Dependencias Python
-├── vercel.json           # Configuración de Vercel
-└── README.md             # Este archivo
-```
-
----
-
-## 🔐 Seguridad
-
-- **Contraseñas**: Hasheadas con pbkdf2_sha256
-- **JWT**: Tokens con lifetime extendido
-- **Validaciones**: Integridad de datos en todos los endpoints
-- **CORS**: Configurado para desarrollo (ajustable en producción)
-
----
-
-## 🚀 Despliegue en Vercel
-
-### Configuración
-
-El proyecto incluye un archivo `vercel.json` preconfigurado.
-
-### Deploy
-
-```bash
-# Instalar Vercel CLI
-npm i -g vercel
-
-# Deploy
-vercel
-```
-
-O usar el botón de deploy:
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=YOUR_REPO_URL)
-
----
-
-## 🧪 Testing
-
-```bash
-# Ejecutar tests
-python manage.py test
-
-# Test de conexión a BD
-python test_db_connection.py
-```
-
----
-
-## 👥 Roles y Permisos
-
-### Monitor
-- ✅ Registro y login
-- ✅ Gestión de sus propios horarios
-- ❌ No puede acceder a endpoints de directivos
-
-### Directivo
-- ✅ Login
-- ✅ Consulta de horarios de todos los monitores
-- ✅ Gestión de ajustes de horas
-- ✅ Administración de configuraciones
-
----
-
-## 🔄 Próximas Fases
-
-### Laboratorio II
-- Implementar marcaje de asistencias (HU4)
-- Implementar gestión directiva de asistencias (HU5)
-
-### Laboratorio III
-- Implementar reportes de horas (HU6)
-
-### Laboratorio IV
-- Implementar búsqueda avanzada de monitores (HU7B)
-- Implementar paneles financieros (HU8)
-
----
-
-## 📝 Scripts Útiles
-
-### Crear Usuario Directivo
-```bash
-python crear_usuario.py
-```
-
-### Resetear Base de Datos
-```bash
-python reset_database.py
-```
-
-### Test de Conexión
-```bash
-python test_db_connection.py
-```
-
----
-
-## 📄 Licencia
-
-Este proyecto es parte del curso de DevOps y está bajo la supervisión académica correspondiente.
-
----
-
-## 🤝 Contribuciones
-
-Este es un proyecto académico. Para contribuir:
-
-1. Fork el proyecto
-2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
-
----
-
-## 📧 Contacto
-
-Para preguntas o soporte técnico, contactar al equipo de desarrollo del proyecto.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fexamples%2Ftree%2Fmain%2Fpython%2Fdjango&demo-title=Django%20%2B%20Vercel&demo-description=Use%20Django%204%20on%20Vercel%20with%20Serverless%20Functions%20using%20the%20Python%20Runtime.&demo-url=https%3A%2F%2Fdjango-template.vercel.app%2F&demo-image=https://assets.vercel.com/image/upload/v1669994241/random/django.png)

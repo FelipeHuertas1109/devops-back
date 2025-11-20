@@ -1,21 +1,5 @@
 # 💰 Guía Completa del Módulo de Finanzas
 
-> ⚠️ **IMPORTANTE - LABORATORIO I**: Los módulos de finanzas NO están implementados en el Laboratorio I. 
-> 
-> **Esta documentación es para referencia futura** y será relevante en el Laboratorio IV.
-> 
-> **Actualmente disponible:**
-> - Configuraciones del sistema (costo_por_hora, semanas_semestre)
-> - Ajustes manuales de horas
-> 
-> **Pendiente de implementación (Lab IV):**
-> - Reportes financieros individuales
-> - Reportes financieros consolidados
-> - Resumen ejecutivo
-> - Comparativa semanal
-
----
-
 ## 📋 1. Configuración Inicial
 
 Antes de usar las finanzas, asegúrate de tener:

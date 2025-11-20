@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import UsuarioPersonalizado, HorarioFijo, AjusteHoras, ConfiguracionSistema
+from .models import UsuarioPersonalizado, HorarioFijo, Asistencia
 
 @admin.register(UsuarioPersonalizado)
 class UsuarioPersonalizadoAdmin(admin.ModelAdmin):
@@ -15,19 +15,10 @@ class HorarioFijoAdmin(admin.ModelAdmin):
     search_fields = ['usuario__username', 'usuario__nombre']
     ordering = ['usuario', 'dia_semana', 'jornada']
 
-@admin.register(AjusteHoras)
-class AjusteHorasAdmin(admin.ModelAdmin):
-    list_display = ['usuario', 'fecha', 'cantidad_horas', 'creado_por', 'created_at']
-    list_filter = ['fecha', 'created_at', 'creado_por']
-    search_fields = ['usuario__username', 'usuario__nombre', 'motivo']
-    ordering = ['-created_at']
+@admin.register(Asistencia)
+class AsistenciaAdmin(admin.ModelAdmin):
+    list_display = ['usuario', 'fecha', 'horario', 'presente']
+    list_filter = ['fecha', 'presente', 'horario__sede']
+    search_fields = ['usuario__username', 'usuario__nombre']
+    ordering = ['-fecha', 'usuario']
     date_hierarchy = 'fecha'
-    readonly_fields = ['created_at', 'updated_at']
-
-@admin.register(ConfiguracionSistema)
-class ConfiguracionSistemaAdmin(admin.ModelAdmin):
-    list_display = ['clave', 'valor', 'tipo_dato', 'creado_por', 'created_at']
-    list_filter = ['tipo_dato', 'created_at']
-    search_fields = ['clave', 'descripcion']
-    ordering = ['clave']
-    readonly_fields = ['created_at', 'updated_at']
