@@ -645,10 +645,7 @@ def directivo_asistencias(request):
     sede = request.query_params.get('sede')  # SA|BA
     usuario_id = request.query_params.get('usuario_id')  # ID específico de monitor
 
-    # Query base: solo asistencias de monitores
-    asistencias_qs = Asistencia.objects.filter(usuario__tipo_usuario='MONITOR').select_related('usuario', 'horario')
-    
-    # Aplicar filtros
+    # Si se proporciona una fecha específica, crear asistencias faltantes basadas en horarios fijos
     if fecha_str:
         try:
             # Intentar formato YYYY-MM-DD primero
@@ -659,6 +656,52 @@ def directivo_asistencias(request):
                 fecha_obj = datetime.strptime(fecha_str, "%m/%d/%Y").date()
             except ValueError:
                 return Response({'detail': 'Formato de fecha inválido. Use YYYY-MM-DD o MM/DD/YYYY'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Obtener el día de la semana (0=Lunes, 6=Domingo)
+        dia_semana = fecha_obj.weekday()
+        
+        # Buscar todos los horarios fijos de monitores para ese día de la semana
+        horarios_qs = HorarioFijo.objects.filter(
+            usuario__tipo_usuario='MONITOR',
+            dia_semana=dia_semana
+        )
+        
+        # Aplicar filtros de jornada y sede si se proporcionan
+        if jornada and jornada.lower() != 'todas':
+            if jornada not in ['M', 'T']:
+                return Response({'detail': 'jornada debe ser M o T'}, status=status.HTTP_400_BAD_REQUEST)
+            horarios_qs = horarios_qs.filter(jornada=jornada)
+        
+        if sede and sede.lower() != 'todas':
+            if sede not in ['SA', 'BA']:
+                return Response({'detail': 'sede debe ser SA o BA'}, status=status.HTTP_400_BAD_REQUEST)
+            horarios_qs = horarios_qs.filter(sede=sede)
+        
+        if usuario_id:
+            try:
+                usuario_id = int(usuario_id)
+                horarios_qs = horarios_qs.filter(usuario__id=usuario_id)
+            except ValueError:
+                return Response({'detail': 'usuario_id debe ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Crear asistencias faltantes para todos los horarios encontrados
+        for horario in horarios_qs:
+            Asistencia.objects.get_or_create(
+                usuario=horario.usuario,
+                fecha=fecha_obj,
+                horario=horario,
+                defaults={
+                    'presente': False,
+                    'estado_autorizacion': 'pendiente',
+                    'horas': 0.00
+                }
+            )
+
+    # Query base: solo asistencias de monitores
+    asistencias_qs = Asistencia.objects.filter(usuario__tipo_usuario='MONITOR').select_related('usuario', 'horario')
+    
+    # Aplicar filtros a la consulta de asistencias
+    if fecha_obj:
         asistencias_qs = asistencias_qs.filter(fecha=fecha_obj)
     elif fecha_inicio or fecha_fin:
         if fecha_inicio:
