@@ -2,26 +2,30 @@
 
 ## 🔐 Autenticación
 
-Todos los endpoints (excepto login y registro) requieren autenticación JWT.
+### Login de Usuario
+**POST** `/example/login/`
 
-**Headers para endpoints protegidos:**
+**Body:**
+```json
+{
+  "password": "Admin#1234",
+  "nombre_de_usuario": "superusuario"
+}
 ```
-Authorization: Bearer <token>
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "usuario": {
+    "id": 1,
+    "username": "superusuario",
+    "nombre": "superusuario",
+    "tipo_usuario": "DIRECTIVO",
+    "tipo_usuario_display": "Directivo"
+  }
+}
 ```
-
----
-
-## 🚀 Endpoints Disponibles (Laboratorio I)
-
-### ✅ HU1: Registro de Monitor
-### ✅ HU2: Login y Obtención de Token
-### ✅ HU3: Gestión de Horarios
-### ✅ HU7A: Ajustes Manuales de Horas
-### ✅ HU9: Administración de Configuraciones del Sistema
-
----
-
-## 🔐 Autenticación (HU1, HU2)
 
 ### Registro de Usuario
 **POST** `/example/registro/`
@@ -73,51 +77,24 @@ Authorization: Bearer <token>
 }
 ```
 
----
-
-### Login de Usuario
-**POST** `/example/login/`
-
-**Body:**
+**O:**
 ```json
 {
-  "password": "Admin#1234",
-  "nombre_de_usuario": "superusuario"
+  "password": ["Ensure this field has at least 6 characters."]
 }
 ```
 
-**Respuesta Exitosa (200):**
-```json
-{
-  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
-  "usuario": {
-    "id": 1,
-    "username": "superusuario",
-    "nombre": "superusuario",
-    "tipo_usuario": "DIRECTIVO",
-    "tipo_usuario_display": "Directivo"
-  }
-}
+**Headers para endpoints protegidos:**
 ```
-
-**Respuesta de Error (404):**
-```json
-{
-  "error": "Usuario no encontrado"
-}
-```
-
-**Respuesta de Error (401):**
-```json
-{
-  "error": "Contraseña incorrecta"
-}
+Authorization: Bearer <token>
 ```
 
 ---
+
+## 👤 Usuarios
 
 ### Obtener Usuario Actual
-**GET** `/example/usuario/actual/`
+**GET** `/example/usuario/`
 
 **Headers:** `Authorization: Bearer <token>`
 
@@ -126,15 +103,13 @@ Authorization: Bearer <token>
 {
   "id": 1,
   "username": "superusuario",
-  "nombre": "superusuario",
-  "tipo_usuario": "DIRECTIVO",
-  "tipo_usuario_display": "Directivo"
+  "nombre": "superusuario"
 }
 ```
 
 ---
 
-## 🕐 Horarios Fijos (HU3)
+## 🕐 Horarios Fijos
 
 ### Listar Horarios del Usuario
 **GET** `/example/horarios/`
@@ -148,10 +123,8 @@ Authorization: Bearer <token>
     "id": 1,
     "usuario": {
       "id": 1,
-      "username": "monitor1",
-      "nombre": "Juan Monitor",
-      "tipo_usuario": "MONITOR",
-      "tipo_usuario_display": "Monitor"
+      "username": "superusuario",
+      "nombre": "superusuario"
     },
     "dia_semana": 0,
     "dia_semana_display": "Lunes",
@@ -162,8 +135,6 @@ Authorization: Bearer <token>
   }
 ]
 ```
-
----
 
 ### Crear Horario Fijo
 **POST** `/example/horarios/`
@@ -188,93 +159,44 @@ Authorization: Bearer <token>
 }
 ```
 
----
-
 ### Obtener Horario Específico
 **GET** `/example/horarios/{id}/`
 
 **Headers:** `Authorization: Bearer <token>`
-
-**Respuesta (200):**
-```json
-{
-  "id": 1,
-  "usuario": {
-    "id": 1,
-    "username": "monitor1",
-    "nombre": "Juan Monitor",
-    "tipo_usuario": "MONITOR",
-    "tipo_usuario_display": "Monitor"
-  },
-  "dia_semana": 0,
-  "dia_semana_display": "Lunes",
-  "jornada": "M",
-  "jornada_display": "Mañana",
-  "sede": "SA",
-  "sede_display": "San Antonio"
-}
-```
-
----
 
 ### Actualizar Horario
 **PUT** `/example/horarios/{id}/`
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Body:**
-```json
-{
-  "dia_semana": 1,
-  "jornada": "T",
-  "sede": "BA"
-}
-```
-
-**Respuesta (200):**
-```json
-{
-  "dia_semana": 1,
-  "jornada": "T",
-  "sede": "BA"
-}
-```
-
----
+**Body:** Igual que crear
 
 ### Eliminar Horario
 **DELETE** `/example/horarios/{id}/`
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Respuesta (204):** Sin contenido
-
 ---
 
-### Crear Múltiples Horarios
-**POST** `/example/horarios/multiple/`
+## ✅ Asistencias
+
+### Listar Asistencias del Usuario
+**GET** `/example/asistencias/`
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Descripción:** Crea múltiples horarios en una sola petición. No elimina los existentes.
-
-**Body:**
+**Respuesta (200):**
 ```json
-{
-  "horarios": [
-    {"dia_semana": 0, "jornada": "M", "sede": "SA"},
-    {"dia_semana": 2, "jornada": "T", "sede": "BA"},
-    {"dia_semana": 4, "jornada": "M", "sede": "SA"}
-  ]
-}
-```
-
-**Respuesta (201):**
-```json
-{
-  "mensaje": "Se crearon 3 horarios exitosamente para monitor1",
-  "horarios_creados": [
-    {
+[
+  {
+    "id": 1,
+    "usuario": {
+      "id": 1,
+      "username": "superusuario",
+      "nombre": "superusuario"
+    },
+    "fecha": "2024-01-15",
+    "horario": {
       "id": 1,
       "usuario": {...},
       "dia_semana": 0,
@@ -283,67 +205,55 @@ Authorization: Bearer <token>
       "jornada_display": "Mañana",
       "sede": "SA",
       "sede_display": "San Antonio"
-    }
-  ],
-  "total_solicitados": 3,
-  "total_creados": 3,
-  "usuario": {
-    "id": 1,
-    "username": "monitor1",
-    "nombre": "Juan Monitor"
+    },
+    "presente": true
   }
-}
+]
 ```
 
----
-
-### Editar Múltiples Horarios (Reemplazar Todos)
-**PUT** o **POST** `/example/horarios/edit-multiple/`
+### Crear Asistencia
+**POST** `/example/asistencias/`
 
 **Headers:** `Authorization: Bearer <token>`
-
-**Descripción:** Elimina TODOS los horarios existentes del usuario y crea los nuevos especificados.
 
 **Body:**
 ```json
 {
-  "horarios": [
-    {"dia_semana": 0, "jornada": "M", "sede": "SA"},
-    {"dia_semana": 2, "jornada": "T", "sede": "BA"}
-  ]
+  "fecha": "2024-01-15",
+  "horario": 1,
+  "presente": true
 }
 ```
 
-**Respuesta (200):**
+**Respuesta (201):**
 ```json
 {
-  "mensaje": "Se editaron los horarios exitosamente para monitor1",
-  "horarios_eliminados": 5,
-  "horarios_creados": [
-    {
-      "id": 6,
-      "usuario": {...},
-      "dia_semana": 0,
-      "dia_semana_display": "Lunes",
-      "jornada": "M",
-      "jornada_display": "Mañana",
-      "sede": "SA",
-      "sede_display": "San Antonio"
-    }
-  ],
-  "total_solicitados": 2,
-  "total_creados": 2,
-  "usuario": {
-    "id": 1,
-    "username": "monitor1",
-    "nombre": "Juan Monitor"
-  }
+  "fecha": "2024-01-15",
+  "horario": 1,
+  "presente": true
 }
 ```
+
+### Obtener Asistencia Específica
+**GET** `/example/asistencias/{id}/`
+
+**Headers:** `Authorization: Bearer <token>`
+
+### Actualizar Asistencia
+**PUT** `/example/asistencias/{id}/`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:** Igual que crear
+
+### Eliminar Asistencia
+**DELETE** `/example/asistencias/{id}/`
+
+**Headers:** `Authorization: Bearer <token>`
 
 ---
 
-## 👨‍💼 Endpoints para Directivos
+## 👥 Endpoints para Directivos
 
 ### Listar Horarios de Todos los Monitores
 **GET** `/example/directivo/horarios/`
@@ -384,9 +294,7 @@ GET /example/directivo/horarios/?jornada=M&sede=SA
       "usuario": {
         "id": 3,
         "username": "monitor1",
-        "nombre": "Juan Monitor",
-        "tipo_usuario": "MONITOR",
-        "tipo_usuario_display": "Monitor"
+        "nombre": "Juan Monitor"
       },
       "dia_semana": 0,
       "dia_semana_display": "Lunes",
@@ -394,14 +302,359 @@ GET /example/directivo/horarios/?jornada=M&sede=SA
       "jornada_display": "Mañana",
       "sede": "SA",
       "sede_display": "San Antonio"
+    },
+    {
+      "id": 2,
+      "usuario": {
+        "id": 3,
+        "username": "monitor1", 
+        "nombre": "Juan Monitor"
+      },
+      "dia_semana": 2,
+      "dia_semana_display": "Miércoles",
+      "jornada": "T",
+      "jornada_display": "Tarde",
+      "sede": "BA",
+      "sede_display": "Barcelona"
     }
   ]
 }
 ```
 
+**Respuesta de Error (400):**
+```json
+{
+  "detail": "dia_semana debe ser entre 0-6"
+}
+```
+
+**Respuesta de Error (401):**
+```json
+{
+  "detail": "Token de autenticación requerido"
+}
+```
+
+**Respuesta de Error (403):**
+```json
+{
+  "detail": "No hay usuarios DIRECTIVO"
+}
+```
+
 ---
 
-## 🔧 Ajustes Manuales de Horas (HU7A)
+## 📈 Endpoints para Reportes
+
+### Reporte de Horas por Monitor Individual
+**GET** `/example/directivo/reportes/horas-monitor/{monitor_id}/`
+
+**Descripción:** Genera un reporte detallado de las horas trabajadas por un monitor específico en un período determinado. **Incluye tanto horas de asistencias como ajustes manuales de horas.**
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta (opcionales):**
+- `fecha_inicio`: Fecha de inicio del reporte (YYYY-MM-DD). Por defecto: 30 días atrás
+- `fecha_fin`: Fecha de fin del reporte (YYYY-MM-DD). Por defecto: hoy
+- `sede`: Filtrar por sede (SA=San Antonio, BA=Barcelona)
+- `jornada`: Filtrar por jornada (M=Mañana, T=Tarde)
+
+**Ejemplos de uso:**
+```bash
+# Reporte del último mes para el monitor ID 3
+GET /example/directivo/reportes/horas-monitor/3/
+
+# Reporte de enero 2024 para el monitor ID 3
+GET /example/directivo/reportes/horas-monitor/3/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31
+
+# Reporte solo de mañana en San Antonio
+GET /example/directivo/reportes/horas-monitor/3/?jornada=M&sede=SA
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "monitor": {
+    "id": 3,
+    "username": "monitor1",
+    "nombre": "Juan Monitor"
+  },
+  "periodo": {
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31"
+  },
+  "estadisticas": {
+    "horas_asistencias": 60.0,
+    "horas_ajustes": 4.0,
+    "total_horas": 64.0,
+    "total_asistencias": 16,
+    "total_ajustes": 1,
+    "asistencias_presentes": 14,
+    "asistencias_autorizadas": 15,
+    "promedio_horas_por_dia": 2.06
+  },
+  "filtros_aplicados": {
+    "sede": "SA",
+    "jornada": "M"
+  },
+  "detalle_por_fecha": {
+    "2024-01-15": [
+      {
+        "id": 1,
+        "usuario": {...},
+        "fecha": "2024-01-15",
+        "horario": {...},
+        "presente": true,
+        "estado_autorizacion": "autorizado",
+        "estado_autorizacion_display": "Autorizado",
+        "horas": 4.00
+      }
+    ]
+  },
+  "ajustes_por_fecha": {
+    "2024-01-16": [
+      {
+        "id": 1,
+        "usuario": {...},
+        "fecha": "2024-01-16",
+        "cantidad_horas": 4.00,
+        "motivo": "Recuperación por día perdido",
+        "asistencia": null,
+        "creado_por": {...},
+        "created_at": "2024-01-16T09:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+### Reporte de Horas de Todos los Monitores
+**GET** `/example/directivo/reportes/horas-todos/`
+
+**Descripción:** Genera un reporte consolidado de las horas trabajadas por todos los monitores en un período determinado. **Incluye tanto horas de asistencias como ajustes manuales de horas.**
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta (opcionales):**
+- `fecha_inicio`: Fecha de inicio del reporte (YYYY-MM-DD). Por defecto: 30 días atrás
+- `fecha_fin`: Fecha de fin del reporte (YYYY-MM-DD). Por defecto: hoy
+- `sede`: Filtrar por sede (SA=San Antonio, BA=Barcelona)
+- `jornada`: Filtrar por jornada (M=Mañana, T=Tarde)
+
+**Ejemplos de uso:**
+```bash
+# Reporte del último mes para todos los monitores
+GET /example/directivo/reportes/horas-todos/
+
+# Reporte de enero 2024 para todos los monitores
+GET /example/directivo/reportes/horas-todos/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31
+
+# Reporte solo de mañana en San Antonio
+GET /example/directivo/reportes/horas-todos/?jornada=M&sede=SA
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "periodo": {
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31"
+  },
+  "estadisticas_generales": {
+    "total_horas": 256.0,
+    "total_asistencias": 64,
+    "total_ajustes": 8,
+    "total_monitores": 8,
+    "promedio_horas_por_monitor": 32.0
+  },
+  "filtros_aplicados": {
+    "sede": "SA",
+    "jornada": "M"
+  },
+  "monitores": [
+    {
+      "monitor": {
+        "id": 3,
+        "username": "monitor1",
+        "nombre": "Juan Monitor"
+      },
+      "horas_asistencias": 60.0,
+      "horas_ajustes": 4.0,
+      "total_horas": 64.0,
+      "total_asistencias": 16,
+      "total_ajustes": 1,
+      "asistencias_presentes": 14,
+      "asistencias_autorizadas": 15,
+      "asistencias": [...],
+      "ajustes": [...]
+    },
+    {
+      "monitor": {
+        "id": 4,
+        "username": "monitor2",
+        "nombre": "María Monitor"
+      },
+      "horas_asistencias": 48.0,
+      "horas_ajustes": 0.0,
+      "total_horas": 48.0,
+      "total_asistencias": 12,
+      "total_ajustes": 0,
+      "asistencias_presentes": 12,
+      "asistencias_autorizadas": 12,
+      "asistencias": [...],
+      "ajustes": []
+    }
+  ]
+}
+```
+
+**Respuesta de Error (404):**
+```json
+{
+  "detail": "Monitor no encontrado"
+}
+```
+
+---
+
+## 👨‍💼 Endpoints para Monitores
+
+### Marcar Asistencia
+**POST** `/example/monitor/marcar/`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "fecha": "2024-01-15",
+  "jornada": "M"
+}
+```
+
+**Descripción:** Los monitores pueden marcar asistencia **durante todo el día** si la asistencia está autorizada por un directivo.
+
+**REGLAS DE MARCADO:**
+- ✅ **Flexibilidad total:** Los monitores pueden marcar **CUALQUIER JORNADA** durante **TODO EL DÍA**
+- ✅ **Sin restricciones de horario:** Pueden marcar asistencia de **MAÑANA en la TARDE** y viceversa
+- ✅ **Mismo día:** Solo importa que sea el mismo día y que esté autorizada por un directivo
+- ✅ **Cualquier hora:** No hay restricciones de horario - pueden marcar a las 8 AM, 2 PM, 6 PM, etc.
+- ❌ **No fechas futuras:** No se puede marcar asistencia para fechas futuras
+- ❌ **No duplicados:** No se puede marcar la misma jornada dos veces
+
+**Validaciones:**
+- El usuario debe ser de tipo MONITOR
+- Debe tener horario asignado para esa jornada en ese día
+- La asistencia debe estar autorizada por un directivo
+- No puede ser una fecha futura
+- No puede marcar la misma jornada dos veces
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "mensaje": "Asistencia marcada exitosamente para M",
+  "asistencia": {
+    "id": 1,
+    "usuario": {
+      "id": 3,
+      "username": "monitor1",
+      "nombre": "Juan Monitor"
+    },
+    "fecha": "2024-01-15",
+    "horario": {
+      "id": 1,
+      "dia_semana": 0,
+      "dia_semana_display": "Lunes",
+      "jornada": "M",
+      "jornada_display": "Mañana",
+      "sede": "SA",
+      "sede_display": "San Antonio"
+    },
+    "presente": true,
+    "estado_autorizacion": "autorizado",
+    "estado_autorizacion_display": "Autorizado",
+    "horas": 4.00
+  }
+}
+```
+
+**Respuesta de Error (400):**
+```json
+{
+  "detail": "Jornada inválida. Debe ser M (Mañana) o T (Tarde)"
+}
+```
+
+**O:**
+```json
+{
+  "detail": "No puedes marcar asistencia para fechas futuras"
+}
+```
+
+**O:**
+```json
+{
+  "detail": "No tienes horario asignado para esa jornada en este día"
+}
+```
+
+**O:**
+```json
+{
+  "detail": "Ya has marcado asistencia para esta jornada",
+  "jornada": "M",
+  "fecha": "2024-01-15",
+  "asistencia": {...}
+}
+```
+
+**Respuesta de Error (403):**
+```json
+{
+  "detail": "Solo monitores pueden marcar asistencia"
+}
+```
+
+**O:**
+```json
+{
+  "detail": "Esta jornada aún no ha sido autorizada por un directivo.",
+  "code": "not_authorized",
+  "jornada": "M",
+  "fecha": "2024-01-15"
+}
+```
+
+### Mis Asistencias
+**GET** `/example/monitor/mis-asistencias/`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Parámetros de consulta (opcionales):**
+- `fecha`: Fecha específica (YYYY-MM-DD). Por defecto: hoy
+
+**Descripción:** Lista las asistencias del monitor para una fecha específica. Genera automáticamente las asistencias faltantes basadas en los horarios fijos.
+
+**Respuesta Exitosa (200):**
+```json
+[
+  {
+    "id": 1,
+    "usuario": {...},
+    "fecha": "2024-01-15",
+    "horario": {...},
+    "presente": false,
+    "estado_autorizacion": "pendiente",
+    "estado_autorizacion_display": "Pendiente",
+    "horas": 0.00
+  }
+]
+```
+
+---
+
+## 🔧 Endpoints para Ajustes de Horas
 
 ### Listar y Crear Ajustes de Horas
 **GET/POST** `/example/directivo/ajustes-horas/`
@@ -411,7 +664,6 @@ GET /example/directivo/horarios/?jornada=M&sede=SA
 **Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
 
 #### GET - Listar Ajustes
-
 **Parámetros de consulta (opcionales):**
 - `monitor_id`: ID específico del monitor (número entero)
 - `fecha_inicio`: Fecha de inicio del filtro (YYYY-MM-DD). Por defecto: 30 días atrás
@@ -426,15 +678,15 @@ GET /example/directivo/ajustes-horas/
 GET /example/directivo/ajustes-horas/?monitor_id=3
 
 # Ajustes en un período específico
-GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-31
+GET /example/directivo/ajustes-horas/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31
 ```
 
 **Respuesta Exitosa (200):**
 ```json
 {
   "periodo": {
-    "fecha_inicio": "2025-01-01",
-    "fecha_fin": "2025-01-31"
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31"
   },
   "estadisticas": {
     "total_ajustes": 5,
@@ -450,38 +702,33 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
       "usuario": {
         "id": 3,
         "username": "monitor1",
-        "nombre": "Juan Monitor",
-        "tipo_usuario": "MONITOR",
-        "tipo_usuario_display": "Monitor"
+        "nombre": "Juan Monitor"
       },
-      "fecha": "2025-01-15",
-      "cantidad_horas": "4.00",
+      "fecha": "2024-01-15",
+      "cantidad_horas": 4.00,
       "motivo": "Recuperación por día perdido por enfermedad",
+      "asistencia": null,
       "creado_por": {
         "id": 1,
         "username": "directivo1",
-        "nombre": "María Directivo",
-        "tipo_usuario": "DIRECTIVO",
-        "tipo_usuario_display": "Directivo"
+        "nombre": "María Directivo"
       },
-      "created_at": "2025-01-15T10:30:00Z",
-      "updated_at": "2025-01-15T10:30:00Z"
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
     }
   ]
 }
 ```
 
----
-
 #### POST - Crear Ajuste
-
 **Body:**
 ```json
 {
   "monitor_id": 3,
-  "fecha": "2025-01-15",
+  "fecha": "2024-01-15",
   "cantidad_horas": 4.00,
-  "motivo": "Recuperación por día perdido por enfermedad"
+  "motivo": "Recuperación por día perdido por enfermedad",
+  "asistencia_id": 25
 }
 ```
 
@@ -490,10 +737,12 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
 - `fecha`: (requerido) Fecha del ajuste en formato YYYY-MM-DD
 - `cantidad_horas`: (requerido) Cantidad de horas (positivo para agregar, negativo para restar). Rango: -24.00 a 24.00
 - `motivo`: (requerido) Descripción del motivo del ajuste
+- `asistencia_id`: (opcional) ID de la asistencia relacionada si aplica
 
 **Validaciones:**
 - `monitor_id` debe existir y ser de tipo MONITOR
 - `cantidad_horas` no puede ser 0 y debe estar entre -24.00 y 24.00
+- Si se proporciona `asistencia_id`, debe existir y pertenecer al monitor especificado
 
 **Respuesta Exitosa (201):**
 ```json
@@ -502,26 +751,33 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
   "usuario": {
     "id": 3,
     "username": "monitor1",
-    "nombre": "Juan Monitor",
-    "tipo_usuario": "MONITOR",
-    "tipo_usuario_display": "Monitor"
+    "nombre": "Juan Monitor"
   },
-  "fecha": "2025-01-15",
-  "cantidad_horas": "4.00",
+  "fecha": "2024-01-15",
+  "cantidad_horas": 4.00,
   "motivo": "Recuperación por día perdido por enfermedad",
+  "asistencia": {
+    "id": 25,
+    "fecha": "2024-01-10",
+    "presente": false,
+    "estado_autorizacion": "rechazado"
+  },
   "creado_por": {
     "id": 1,
     "username": "directivo1",
-    "nombre": "María Directivo",
-    "tipo_usuario": "DIRECTIVO",
-    "tipo_usuario_display": "Directivo"
+    "nombre": "María Directivo"
   },
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:30:00Z"
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
 }
 ```
 
----
+**Respuesta de Error (400):**
+```json
+{
+  "cantidad_horas": ["La cantidad de horas debe estar entre -24.00 y 24.00."]
+}
+```
 
 ### Detalles y Eliminar Ajuste
 **GET/DELETE** `/example/directivo/ajustes-horas/{id}/`
@@ -529,7 +785,6 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
 **Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
 
 #### GET - Obtener Detalles
-
 **Respuesta Exitosa (200):**
 ```json
 {
@@ -537,29 +792,23 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
   "usuario": {
     "id": 3,
     "username": "monitor1",
-    "nombre": "Juan Monitor",
-    "tipo_usuario": "MONITOR",
-    "tipo_usuario_display": "Monitor"
+    "nombre": "Juan Monitor"
   },
-  "fecha": "2025-01-15",
-  "cantidad_horas": "4.00",
+  "fecha": "2024-01-15",
+  "cantidad_horas": 4.00,
   "motivo": "Recuperación por día perdido por enfermedad",
+  "asistencia": null,
   "creado_por": {
     "id": 1,
     "username": "directivo1",
-    "nombre": "María Directivo",
-    "tipo_usuario": "DIRECTIVO",
-    "tipo_usuario_display": "Directivo"
+    "nombre": "María Directivo"
   },
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:30:00Z"
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
 }
 ```
 
----
-
 #### DELETE - Eliminar Ajuste
-
 **Descripción:** Elimina un ajuste de horas. Útil para corregir errores.
 
 **Respuesta Exitosa (204):**
@@ -569,9 +818,383 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
 }
 ```
 
+**Respuesta de Error (404):**
+```json
+{
+  "detail": "Ajuste de horas no encontrado"
+}
+```
+
+### Buscar Monitores
+**GET** `/example/directivo/buscar-monitores/`
+
+**Descripción:** Permite a los directivos buscar monitores por nombre o username para obtener su ID. Útil para formularios de ajustes de horas.
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta:**
+- `q`: (requerido) Término de búsqueda (mínimo 2 caracteres)
+
+**Ejemplos de uso:**
+```bash
+# Buscar monitores por nombre
+GET /example/directivo/buscar-monitores/?q=juan
+
+# Buscar por username
+GET /example/directivo/buscar-monitores/?q=monitor1
+
+# Búsqueda parcial
+GET /example/directivo/buscar-monitores/?q=mar
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "busqueda": "juan",
+  "total_encontrados": 2,
+  "monitores": [
+    {
+      "id": 3,
+      "username": "monitor1",
+      "nombre": "Juan Monitor"
+    },
+    {
+      "id": 7,
+      "username": "jperez",
+      "nombre": "Juan Pérez"
+    }
+  ]
+}
+```
+
+**Respuesta de Error (400):**
+```json
+{
+  "detail": "Parámetro de búsqueda \"q\" es requerido"
+}
+```
+
+**O:**
+```json
+{
+  "detail": "La búsqueda debe tener al menos 2 caracteres"
+}
+```
+
+**Características:**
+- Búsqueda case-insensitive en nombre y username
+- Máximo 20 resultados por búsqueda
+- Resultados ordenados por nombre
+- Solo busca usuarios de tipo MONITOR
+
 ---
 
-## ⚙️ Configuraciones del Sistema (HU9)
+## 💰 Endpoints para Finanzas
+
+### Reporte Financiero Individual de Monitor
+**GET** `/example/directivo/finanzas/monitor/{monitor_id}/`
+
+**Descripción:** Genera un reporte financiero detallado de un monitor específico, incluyendo costos actuales, proyecciones del semestre, horas semanales y estadísticas completas.
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta (opcionales):**
+- `fecha_inicio`: Fecha de inicio del reporte (YYYY-MM-DD). Por defecto: 30 días atrás
+- `fecha_fin`: Fecha de fin del reporte (YYYY-MM-DD). Por defecto: hoy
+- `semanas_trabajadas`: Número de semanas trabajadas en el semestre (0-16). Por defecto: 8
+
+**Ejemplos de uso:**
+```bash
+# Reporte del último mes para el monitor ID 3
+GET /example/directivo/finanzas/monitor/3/
+
+# Reporte de enero 2024 con 10 semanas trabajadas
+GET /example/directivo/finanzas/monitor/3/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31&semanas_trabajadas=10
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "monitor": {
+    "id": 3,
+    "username": "monitor1",
+    "nombre": "Juan Monitor"
+  },
+  "periodo_actual": {
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31",
+    "dias_trabajados": 31
+  },
+  "horarios_semanales": {
+    "horas_por_semana": 12,
+    "jornadas_por_semana": 3,
+    "detalle_por_dia": {
+      "Lunes": [
+        {"jornada": "Mañana", "sede": "San Antonio"}
+      ],
+      "Miércoles": [
+        {"jornada": "Tarde", "sede": "Barcelona"}
+      ],
+      "Viernes": [
+        {"jornada": "Mañana", "sede": "San Antonio"}
+      ]
+    }
+  },
+  "finanzas_actuales": {
+    "horas_trabajadas": 48.0,
+    "horas_asistencias": 44.0,
+    "horas_ajustes": 4.0,
+    "costo_total": 478320.0,
+    "costo_por_hora": 9965
+  },
+  "proyeccion_semestre": {
+    "semanas_trabajadas": 8,
+    "semanas_faltantes": 8,
+    "horas_totales_proyectadas": 192.0,
+    "horas_trabajadas_proyectadas": 96.0,
+    "costo_total_proyectado": 1913280.0,
+    "costo_trabajado_proyectado": 956640.0,
+    "porcentaje_completado": 50.0
+  },
+  "estadisticas": {
+    "total_asistencias": 12,
+    "total_ajustes": 1,
+    "promedio_horas_por_dia": 1.55
+  }
+}
+```
+
+### Reporte Financiero de Todos los Monitores
+**GET** `/example/directivo/finanzas/todos-monitores/`
+
+**Descripción:** Genera un reporte financiero consolidado de todos los monitores, incluyendo costos totales, proyecciones, comparativas y estadísticas generales.
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta (opcionales):**
+- `fecha_inicio`: Fecha de inicio del reporte (YYYY-MM-DD). Por defecto: 30 días atrás
+- `fecha_fin`: Fecha de fin del reporte (YYYY-MM-DD). Por defecto: hoy
+- `semanas_trabajadas`: Número de semanas trabajadas en el semestre (0-16). Por defecto: 8
+
+**Ejemplos de uso:**
+```bash
+# Reporte consolidado del último mes
+GET /example/directivo/finanzas/todos-monitores/
+
+# Reporte de enero 2024 con 10 semanas trabajadas
+GET /example/directivo/finanzas/todos-monitores/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31&semanas_trabajadas=10
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "periodo_actual": {
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31",
+    "dias_trabajados": 31
+  },
+  "semanas_trabajadas": 8,
+  "estadisticas_generales": {
+    "total_monitores": 8,
+    "costo_total_actual": 3826560.0,
+    "costo_total_proyectado": 7653120.0,
+    "costo_promedio_por_monitor": 478320.0,
+    "horas_totales_actuales": 384.0,
+    "horas_totales_proyectadas": 768.0,
+    "horas_promedio_por_monitor": 48.0,
+    "costo_por_hora": 9965
+  },
+  "resumen_financiero": {
+    "diferencia_proyeccion_vs_actual": 3826560.0,
+    "porcentaje_ejecutado": 50.0,
+    "costo_semanal_promedio": 86352.0
+  },
+  "monitores": [
+    {
+      "monitor": {
+        "id": 3,
+        "username": "monitor1",
+        "nombre": "Juan Monitor"
+      },
+      "horarios_semanales": {
+        "horas_por_semana": 12,
+        "jornadas_por_semana": 3
+      },
+      "finanzas_actuales": {
+        "horas_trabajadas": 48.0,
+        "costo_total": 478320.0
+      },
+      "proyeccion_semestre": {
+        "semanas_trabajadas": 8,
+        "semanas_faltantes": 8,
+        "costo_total_proyectado": 1913280.0,
+        "costo_trabajado_proyectado": 956640.0,
+        "porcentaje_completado": 50.0
+      },
+      "estadisticas": {
+        "total_asistencias": 12,
+        "total_ajustes": 1
+      }
+    }
+  ]
+}
+```
+
+### Resumen Ejecutivo Financiero
+**GET** `/example/directivo/finanzas/resumen-ejecutivo/`
+
+**Descripción:** Dashboard ejecutivo con métricas clave, tendencias, alertas y resumen financiero del sistema completo.
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Parámetros de consulta (opcionales):**
+- `fecha_inicio`: Fecha de inicio del reporte (YYYY-MM-DD). Por defecto: 30 días atrás
+- `fecha_fin`: Fecha de fin del reporte (YYYY-MM-DD). Por defecto: hoy
+- `semanas_trabajadas`: Número de semanas trabajadas en el semestre (0-16). Por defecto: 8
+
+**Ejemplos de uso:**
+```bash
+# Dashboard ejecutivo del último mes
+GET /example/directivo/finanzas/resumen-ejecutivo/
+
+# Dashboard de enero 2024
+GET /example/directivo/finanzas/resumen-ejecutivo/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "periodo": {
+    "fecha_inicio": "2024-01-01",
+    "fecha_fin": "2024-01-31",
+    "semanas_trabajadas": 8
+  },
+  "metricas_principales": {
+    "total_monitores": 8,
+    "monitores_activos": 6,
+    "porcentaje_actividad": 75.0,
+    "costo_total_actual": 3826560.0,
+    "costo_total_proyectado": 7653120.0,
+    "horas_totales_actuales": 384.0,
+    "horas_totales_proyectadas": 768.0
+  },
+  "indicadores_financieros": {
+    "costo_por_hora": 9965,
+    "costo_promedio_por_monitor": 478320.0,
+    "costo_semanal_promedio": 86352.0,
+    "porcentaje_ejecutado": 50.0,
+    "diferencia_presupuesto": 3826560.0
+  },
+  "top_monitores": {
+    "por_costo": [
+      {
+        "monitor": {
+          "id": 3,
+          "nombre": "Juan Monitor",
+          "username": "monitor1"
+        },
+        "costo_actual": 478320.0,
+        "horas_trabajadas": 48.0
+      }
+    ],
+    "total_considerados": 8
+  },
+  "alertas": [
+    {
+      "tipo": "info",
+      "mensaje": "Solo 6 de 8 monitores han trabajado en el período"
+    }
+  ],
+  "resumen_semanal": {
+    "costo_semanal_total": 690816.0,
+    "horas_semanal_promedio": 86.71,
+    "proyeccion_fin_semestre": 3826560.0
+  }
+}
+```
+
+### Comparativa Financiera por Semanas
+**GET** `/example/directivo/finanzas/comparativa-semanas/`
+
+**Descripción:** Muestra la evolución financiera por semanas del semestre, incluyendo costos acumulados, horas trabajadas y tendencias.
+
+**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+
+**Ejemplos de uso:**
+```bash
+# Comparativa de las 16 semanas del semestre
+GET /example/directivo/finanzas/comparativa-semanas/
+```
+
+**Respuesta Exitosa (200):**
+```json
+{
+  "total_semanas": 16,
+  "semanas_trabajadas": 8,
+  "semanas_pendientes": 8,
+  "resumen_general": {
+    "costo_total_semestre": 7653120.0,
+    "horas_total_semestre": 768.0,
+    "costo_promedio_por_semana": 478320.0,
+    "horas_promedio_por_semana": 48.0
+  },
+  "semanas": [
+    {
+      "semana": 1,
+      "costo_total": 478320.0,
+      "horas_total": 48.0,
+      "monitores_activos": 8,
+      "costo_promedio_por_monitor": 59790.0,
+      "estado": "completada",
+      "costo_acumulado": 478320.0,
+      "horas_acumuladas": 48.0,
+      "porcentaje_completado": 6.25
+    },
+    {
+      "semana": 2,
+      "costo_total": 478320.0,
+      "horas_total": 48.0,
+      "monitores_activos": 8,
+      "costo_promedio_por_monitor": 59790.0,
+      "estado": "completada",
+      "costo_acumulado": 956640.0,
+      "horas_acumuladas": 96.0,
+      "porcentaje_completado": 12.5
+    }
+  ],
+  "tendencias": {
+    "costo_por_semana": [478320.0, 478320.0, 478320.0],
+    "horas_por_semana": [48.0, 48.0, 48.0],
+    "costo_acumulado": [478320.0, 956640.0, 1434960.0]
+  }
+}
+```
+
+**Respuesta de Error (400):**
+```json
+{
+  "detail": "semanas_trabajadas debe estar entre 0 y 16"
+}
+```
+
+**Respuesta de Error (404):**
+```json
+{
+  "detail": "Monitor no encontrado"
+}
+```
+
+**Características de los Endpoints Financieros:**
+- **Costo por hora:** Configurable por directivos (por defecto: 9,965 COP)
+- **Duración del semestre:** Configurable por directivos (por defecto: 14 semanas)
+- **Cálculo de horas:** Cada jornada (M/T) = 4 horas
+- **Proyecciones:** Basadas en horarios fijos de cada monitor
+- **Incluye:** Asistencias + ajustes de horas manuales
+- **Ordenamiento:** Monitores ordenados por costo total (descendente)
+
+---
+
+## ⚙️ Endpoints para Configuraciones del Sistema
 
 ### Listar Configuraciones
 **GET** `/example/directivo/configuraciones/`
@@ -595,12 +1218,10 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
       "creado_por": {
         "id": 1,
         "username": "directivo1",
-        "nombre": "María Directivo",
-        "tipo_usuario": "DIRECTIVO",
-        "tipo_usuario_display": "Directivo"
+        "nombre": "María Directivo"
       },
-      "created_at": "2025-01-15T10:30:00Z",
-      "updated_at": "2025-01-15T10:30:00Z"
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
     },
     {
       "id": 2,
@@ -610,14 +1231,12 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
       "tipo_dato": "entero",
       "valor_tipado": 14,
       "creado_por": {...},
-      "created_at": "2025-01-15T10:30:00Z",
-      "updated_at": "2025-01-15T10:30:00Z"
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
     }
   ]
 }
 ```
-
----
 
 ### Crear Nueva Configuración
 **POST** `/example/directivo/configuraciones/crear/`
@@ -652,12 +1271,10 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
   "tipo_dato": "entero",
   "valor_tipado": 100,
   "creado_por": {...},
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:30:00Z"
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
 }
 ```
-
----
 
 ### Inicializar Configuraciones por Defecto
 **POST** `/example/directivo/configuraciones/inicializar/`
@@ -693,8 +1310,6 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
 }
 ```
 
----
-
 ### Obtener/Actualizar/Eliminar Configuración
 **GET/PUT/DELETE** `/example/directivo/configuraciones/{clave}/`
 
@@ -703,7 +1318,6 @@ GET /example/directivo/ajustes-horas/?fecha_inicio=2025-01-01&fecha_fin=2025-01-
 **Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
 
 #### GET - Obtener Configuración
-
 **Ejemplo:**
 ```bash
 GET /example/directivo/configuraciones/costo_por_hora/
@@ -719,44 +1333,22 @@ GET /example/directivo/configuraciones/costo_por_hora/
   "tipo_dato": "decimal",
   "valor_tipado": 9965.0,
   "creado_por": {...},
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:30:00Z"
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
 }
 ```
 
----
-
 #### PUT - Actualizar Configuración
-
 **Body:**
 ```json
 {
-  "clave": "costo_por_hora",
   "valor": "10000",
   "descripcion": "Costo por hora actualizado",
   "tipo_dato": "decimal"
 }
 ```
 
-**Respuesta (200):**
-```json
-{
-  "id": 1,
-  "clave": "costo_por_hora",
-  "valor": "10000",
-  "descripcion": "Costo por hora actualizado",
-  "tipo_dato": "decimal",
-  "valor_tipado": 10000.0,
-  "creado_por": {...},
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-10-23T14:30:00Z"
-}
-```
-
----
-
 #### DELETE - Eliminar Configuración
-
 **Respuesta Exitosa (204):**
 ```json
 {
@@ -764,14 +1356,26 @@ GET /example/directivo/configuraciones/costo_por_hora/
 }
 ```
 
----
+**Respuesta de Error (400):**
+```json
+{
+  "valor": ["El valor debe ser un número decimal válido."]
+}
+```
 
-### Obtener/Actualizar/Eliminar Configuración por ID
-**GET/PUT/DELETE** `/example/directivo/configuraciones/{id}/`
+**Respuesta de Error (404):**
+```json
+{
+  "detail": "Configuración no encontrada"
+}
+```
 
-**Descripción:** Mismo comportamiento que el endpoint por clave, pero usando el ID numérico.
-
-**Headers:** `Authorization: Bearer <token>` (solo DIRECTIVO)
+**Características de las Configuraciones:**
+- **Claves predefinidas:** `costo_por_hora`, `semanas_semestre`
+- **Tipos de dato:** decimal, entero, texto, booleano
+- **Validación:** Valores validados según el tipo de dato
+- **Trazabilidad:** Registro de quién creó/modificó cada configuración
+- **Valor tipado:** Conversión automática del valor al tipo correspondiente
 
 ---
 
@@ -780,10 +1384,8 @@ GET /example/directivo/configuraciones/costo_por_hora/
 - **200 OK**: Petición exitosa
 - **201 Created**: Recurso creado exitosamente
 - **204 No Content**: Recurso eliminado exitosamente
-- **207 Multi-Status**: Operación masiva con algunos errores
 - **400 Bad Request**: Error en los datos enviados
 - **401 Unauthorized**: Token inválido o faltante
-- **403 Forbidden**: Permisos insuficientes
 - **404 Not Found**: Recurso no encontrado
 
 ---
@@ -800,22 +1402,12 @@ GET /example/directivo/configuraciones/costo_por_hora/
 - `6`: Domingo
 
 ### Jornadas
-- `"M"`: Mañana (4 horas)
-- `"T"`: Tarde (4 horas)
+- `"M"`: Mañana
+- `"T"`: Tarde
 
 ### Sedes
 - `"SA"`: San Antonio
 - `"BA"`: Barcelona
-
-### Tipos de Usuario
-- `"MONITOR"`: Monitor académico
-- `"DIRECTIVO"`: Directivo administrativo
-
-### Tipos de Dato (Configuraciones)
-- `"decimal"`: Números decimales
-- `"entero"`: Números enteros
-- `"texto"`: Cadenas de texto
-- `"booleano"`: Valores true/false
 
 ---
 
@@ -828,19 +1420,7 @@ curl -X POST http://localhost:8000/example/login/ \
   -d '{"password": "Admin#1234", "nombre_de_usuario": "superusuario"}'
 ```
 
-### 2. Registrar Nuevo Monitor
-```bash
-curl -X POST http://localhost:8000/example/registro/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "monitor1",
-    "nombre": "Juan Monitor",
-    "password": "password123",
-    "confirm_password": "password123"
-  }'
-```
-
-### 3. Crear Horario Fijo
+### 2. Crear Horario Fijo
 ```bash
 curl -X POST http://localhost:8000/example/horarios/ \
   -H "Authorization: Bearer <token>" \
@@ -848,37 +1428,37 @@ curl -X POST http://localhost:8000/example/horarios/ \
   -d '{"dia_semana": 0, "jornada": "M", "sede": "SA"}'
 ```
 
-### 4. Crear Múltiples Horarios
+### 3. Marcar Asistencia (Monitor)
 ```bash
-curl -X POST http://localhost:8000/example/horarios/multiple/ \
+# Marcar asistencia de mañana
+curl -X POST http://localhost:8000/example/monitor/marcar/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "horarios": [
-      {"dia_semana": 0, "jornada": "M", "sede": "SA"},
-      {"dia_semana": 2, "jornada": "T", "sede": "BA"},
-      {"dia_semana": 4, "jornada": "M", "sede": "SA"}
-    ]
-  }'
+  -d '{"fecha": "2024-01-15", "jornada": "M"}'
+
+# Marcar asistencia de tarde
+curl -X POST http://localhost:8000/example/monitor/marcar/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"fecha": "2024-01-15", "jornada": "T"}'
 ```
 
-### 5. Consultar Horarios (Directivo)
+### 4. Reporte Financiero Individual
 ```bash
-curl -X GET "http://localhost:8000/example/directivo/horarios/?jornada=M&sede=SA" \
+curl -X GET "http://localhost:8000/example/directivo/finanzas/monitor/3/?fecha_inicio=2024-01-01&fecha_fin=2024-01-31" \
   -H "Authorization: Bearer <token>"
 ```
 
-### 6. Crear Ajuste de Horas (Directivo)
+### 5. Resumen Ejecutivo Financiero
 ```bash
-curl -X POST http://localhost:8000/example/directivo/ajustes-horas/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "monitor_id": 3,
-    "fecha": "2025-10-22",
-    "cantidad_horas": 2.5,
-    "motivo": "Horas extra por evento especial"
-  }'
+curl -X GET "http://localhost:8000/example/directivo/finanzas/resumen-ejecutivo/?semanas_trabajadas=8" \
+  -H "Authorization: Bearer <token>"
+```
+
+### 6. Comparativa por Semanas
+```bash
+curl -X GET "http://localhost:8000/example/directivo/finanzas/comparativa-semanas/" \
+  -H "Authorization: Bearer <token>"
 ```
 
 ### 7. Inicializar Configuraciones por Defecto
@@ -892,61 +1472,23 @@ curl -X POST "http://localhost:8000/example/directivo/configuraciones/inicializa
 curl -X PUT "http://localhost:8000/example/directivo/configuraciones/costo_por_hora/" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "clave": "costo_por_hora",
-    "valor": "10000",
-    "descripcion": "Costo por hora actualizado",
-    "tipo_dato": "decimal"
-  }'
+  -d '{"valor": "10000", "descripcion": "Costo por hora actualizado", "tipo_dato": "decimal"}'
 ```
 
-### 9. Autorizar Monitor (Directivo)
+### 9. Actualizar Semanas del Semestre
 ```bash
-curl -X POST http://localhost:8000/example/directivo/autorizar-monitor/ \
+curl -X PUT "http://localhost:8000/example/directivo/configuraciones/semanas_semestre/" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "monitor_id": 1
-  }'
-```
-
-### 10. Marcar Asistencia (Monitor)
-```bash
-curl -X POST http://localhost:8000/example/monitor/marcar-asistencia/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "horas": 4
-  }'
+  -d '{"valor": "16", "descripcion": "Semestre de 16 semanas", "tipo_dato": "entero"}'
 ```
 
 ---
 
 ## 📝 Notas Importantes
 
-- **Tokens JWT**: No expiran (configurados para duración extendida)
-- **Autenticación**: Todos los endpoints excepto login y registro requieren token
-- **Permisos**: 
-  - Monitores: Pueden gestionar solo sus propios horarios
-  - Directivos: Pueden consultar horarios de todos, crear ajustes y configurar el sistema
-- **Validaciones**: 
-  - Los horarios fijos son únicos por usuario, día y jornada
-  - Los ajustes de horas tienen rango de -24 a 24 horas
-  - Las configuraciones tienen validación según tipo de dato
-- **Seguridad**: Contraseñas cifradas con pbkdf2_sha256
-
----
-
-## 🔗 Base URL
-
-**Desarrollo:** `http://localhost:8000/example/`
-
-**Producción:** `https://tu-dominio.vercel.app/example/`
-
----
-
-## 📚 Recursos Adicionales
-
-- **Alcance del Proyecto:** Ver `ALCANCE_LABORATORIO_I.md`
-- **Cambios Realizados:** Ver `CAMBIOS_LABORATORIO_I.md`
-- **README:** Información general del proyecto
+- **Tokens JWT**: No expiran (configurados para 100 años)
+- **Autenticación**: Todos los endpoints excepto login requieren token
+- **Permisos**: Los usuarios solo pueden acceder a sus propios datos
+- **Validaciones**: Los horarios fijos son únicos por usuario, día, jornada
+- **Asistencias**: Únicas por usuario, fecha y horario

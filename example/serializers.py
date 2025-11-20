@@ -1,8 +1,6 @@
 from rest_framework import serializers
 from .models import UsuarioPersonalizado, HorarioFijo, Asistencia, AjusteHoras, ConfiguracionSistema
 
-# ===== SERIALIZERS DE AUTENTICACIÓN (HU1, HU2) =====
-
 class UsuarioSerializer(serializers.ModelSerializer):
     tipo_usuario_display = serializers.CharField(source='get_tipo_usuario_display', read_only=True)
     
@@ -55,8 +53,9 @@ class LoginSerializer(serializers.Serializer):
     nombre_de_usuario = serializers.CharField()
     password = serializers.CharField()
 
-
-# ===== SERIALIZERS DE HORARIOS (HU3) =====
+class TokenSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    usuario = UsuarioSerializer()
 
 class HorarioFijoSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer(read_only=True)
@@ -160,114 +159,43 @@ class HorarioFijoEditMultipleSerializer(serializers.Serializer):
         
         return value
 
-
-# ===== SERIALIZERS DE ASISTENCIAS (HU5) =====
-
 class AsistenciaSerializer(serializers.ModelSerializer):
-    """
-    Serializer completo para asistencias con información detallada.
-    """
     usuario = UsuarioSerializer(read_only=True)
     horario = HorarioFijoSerializer(read_only=True)
     estado_autorizacion_display = serializers.CharField(source='get_estado_autorizacion_display', read_only=True)
     
     class Meta:
         model = Asistencia
-        fields = [
-            'id', 'usuario', 'horario', 'fecha', 'presente', 
-            'estado_autorizacion', 'estado_autorizacion_display', 
-            'horas', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
+        fields = ['id', 'usuario', 'fecha', 'horario', 'presente', 'estado_autorizacion', 'estado_autorizacion_display', 'horas']
+        read_only_fields = ['id']
 
 class AsistenciaCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer para crear nuevas asistencias.
-    El usuario se obtiene del token de autenticación.
-    """
-    horario_id = serializers.IntegerField(write_only=True, help_text="ID del horario fijo asociado")
-    
     class Meta:
         model = Asistencia
-        fields = ['horario_id', 'fecha', 'presente', 'horas']
-    
-    def validate_horario_id(self, value):
-        """Validar que el horario existe"""
-        try:
-            horario = HorarioFijo.objects.get(id=value)
-            return value
-        except HorarioFijo.DoesNotExist:
-            raise serializers.ValidationError("Horario no encontrado.")
-    
-    def validate_horas(self, value):
-        """Validar rango de horas permitidas"""
-        if value < 0 or value > 24:
-            raise serializers.ValidationError("Las horas deben estar entre 0 y 24.")
-        return value
-    
-    def validate(self, data):
-        """
-        Validar unicidad: no puede existir otra asistencia con la misma combinación
-        usuario + fecha + horario
-        """
-        # Obtener el usuario del contexto (se pasa desde la vista)
-        usuario = self.context.get('usuario')
-        horario_id = data.get('horario_id')
-        fecha = data.get('fecha')
-        
-        if usuario and horario_id and fecha:
-            # Verificar si existe una asistencia con estos datos
-            existe = Asistencia.objects.filter(
-                usuario=usuario,
-                horario_id=horario_id,
-                fecha=fecha
-            ).exists()
-            
-            if existe:
-                raise serializers.ValidationError(
-                    "Ya existe un registro de asistencia para este usuario, fecha y horario."
-                )
-        
-        return data
+        fields = ['fecha', 'horario', 'presente']
 
-
-class AsistenciaUpdateSerializer(serializers.ModelSerializer):
-    """
-    Serializer para actualizar asistencias existentes.
-    """
-    class Meta:
-        model = Asistencia
-        fields = ['presente', 'horas', 'estado_autorizacion']
-    
-    def validate_horas(self, value):
-        """Validar rango de horas permitidas"""
-        if value < 0 or value > 24:
-            raise serializers.ValidationError("Las horas deben estar entre 0 y 24.")
-        return value
-
-
-# ===== SERIALIZERS DE AJUSTES DE HORAS (HU7A) =====
 
 class AjusteHorasSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer(read_only=True)
     creado_por = UsuarioSerializer(read_only=True)
+    asistencia = AsistenciaSerializer(read_only=True)
     
     class Meta:
         model = AjusteHoras
         fields = [
             'id', 'usuario', 'fecha', 'cantidad_horas', 'motivo', 
-            'creado_por', 'created_at', 'updated_at'
+            'asistencia', 'creado_por', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class AjusteHorasCreateSerializer(serializers.ModelSerializer):
     monitor_id = serializers.IntegerField(write_only=True, help_text="ID del monitor al que se le ajustan las horas")
+    asistencia_id = serializers.IntegerField(write_only=True, required=False, allow_null=True, help_text="ID de la asistencia relacionada (opcional)")
     
     class Meta:
         model = AjusteHoras
-        fields = ['monitor_id', 'fecha', 'cantidad_horas', 'motivo']
+        fields = ['monitor_id', 'fecha', 'cantidad_horas', 'motivo', 'asistencia_id']
     
     def validate_monitor_id(self, value):
         """Validar que el monitor existe"""
@@ -277,6 +205,16 @@ class AjusteHorasCreateSerializer(serializers.ModelSerializer):
         except UsuarioPersonalizado.DoesNotExist:
             raise serializers.ValidationError("Monitor no encontrado o no es de tipo MONITOR.")
     
+    def validate_asistencia_id(self, value):
+        """Validar que la asistencia existe si se proporciona"""
+        if value is not None:
+            try:
+                Asistencia.objects.get(id=value)
+                return value
+            except Asistencia.DoesNotExist:
+                raise serializers.ValidationError("Asistencia no encontrada.")
+        return value
+    
     def validate_cantidad_horas(self, value):
         """Validar rango de horas permitidas"""
         if value < -24.00 or value > 24.00:
@@ -284,9 +222,22 @@ class AjusteHorasCreateSerializer(serializers.ModelSerializer):
         if value == 0:
             raise serializers.ValidationError("La cantidad de horas no puede ser 0.")
         return value
+    
+    def validate(self, data):
+        """Validaciones adicionales"""
+        # Si se proporciona asistencia_id, validar que pertenezca al monitor
+        if data.get('asistencia_id'):
+            try:
+                asistencia = Asistencia.objects.get(id=data['asistencia_id'])
+                if asistencia.usuario.id != data['monitor_id']:
+                    raise serializers.ValidationError("La asistencia no pertenece al monitor especificado.")
+            except Asistencia.DoesNotExist:
+                pass  # Ya validado en validate_asistencia_id
+        
+        return data
 
 
-# ===== SERIALIZERS DE CONFIGURACIONES DEL SISTEMA (HU9) =====
+# Serializers para Configuraciones del Sistema
 
 class ConfiguracionSistemaSerializer(serializers.ModelSerializer):
     """

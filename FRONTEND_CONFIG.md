@@ -1,10 +1,5 @@
 # 🔗 Configuración del Frontend
 
-> ⚠️ **IMPORTANTE - LABORATORIO I**: Solo los endpoints marcados con ✅ están actualmente disponibles.
-> Los endpoints marcados con ⏳ se implementarán en futuros laboratorios.
-
----
-
 ## 📡 URLs del API Backend
 
 ### Desarrollo Local
@@ -19,7 +14,7 @@ Base URL: https://tu-backend-url.vercel.app/example/
 
 ## 🔐 Endpoints Disponibles
 
-### ✅ Autenticación (Disponible)
+### Autenticación
 ```javascript
 // Login
 POST /example/login/
@@ -42,7 +37,7 @@ GET /example/usuario/actual/
 Headers: { Authorization: "Bearer <token>" }
 ```
 
-### ✅ Horarios (Disponible)
+### Horarios
 ```javascript
 // Obtener horarios
 GET /example/horarios/
